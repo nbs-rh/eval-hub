@@ -368,7 +368,6 @@ class TestModelAPI:
         assert "Cannot delete runtime models" in data["detail"]
 
 
-
 class TestModelAPIValidation:
     """Test model API validation and edge cases."""
 

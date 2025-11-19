@@ -1178,12 +1178,6 @@ async def delete_model(
         ) from e
 
 
-
-
-
-
-
-
 async def _execute_evaluation_async(
     request: EvaluationRequest,
     experiment_id: str,
