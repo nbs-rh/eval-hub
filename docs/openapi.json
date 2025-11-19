@@ -614,6 +614,9 @@
     },
     "/api/v1/collections": {
       "get": {
+        "tags": [
+          "Collections"
+        ],
         "summary": "List Collections",
         "description": "List all benchmark collections.",
         "operationId": "list_collections_api_v1_collections_get",
@@ -631,6 +634,9 @@
         }
       },
       "post": {
+        "tags": [
+          "Collections"
+        ],
         "summary": "Create Collection",
         "description": "Create a new collection.",
         "operationId": "create_collection_api_v1_collections_post",
@@ -670,6 +676,9 @@
     },
     "/api/v1/collections/{collection_id}": {
       "get": {
+        "tags": [
+          "Collections"
+        ],
         "summary": "Get Collection",
         "description": "Get details of a specific collection.",
         "operationId": "get_collection_api_v1_collections__collection_id__get",
@@ -708,6 +717,9 @@
         }
       },
       "put": {
+        "tags": [
+          "Collections"
+        ],
         "summary": "Update Collection",
         "description": "Update an existing collection.",
         "operationId": "update_collection_api_v1_collections__collection_id__put",
@@ -756,6 +768,9 @@
         }
       },
       "delete": {
+        "tags": [
+          "Collections"
+        ],
         "summary": "Delete Collection",
         "description": "Delete a collection.",
         "operationId": "delete_collection_api_v1_collections__collection_id__delete",
