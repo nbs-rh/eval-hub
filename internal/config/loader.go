@@ -101,7 +101,7 @@ func LoadProviderConfigs(logger *slog.Logger) (map[string]*api.ProviderResource,
 // multiple sources.
 //
 // Configuration loading order (later sources override earlier ones):
-//  1. server.yaml (config/server.yaml) - Default configuration loaded first
+//  1. config.yaml (config/config.yaml) - Configuration loaded first
 //  2. Environment variables - Mapped via env.mappings configuration
 //  3. Secrets from files - Mapped via secrets.mappings with secrets.dir
 //
@@ -130,18 +130,10 @@ func LoadProviderConfigs(logger *slog.Logger) (map[string]*api.ProviderResource,
 //   - *Config: The loaded configuration with all sources applied
 //   - error: An error if configuration cannot be loaded or is invalid
 func LoadConfig(logger *slog.Logger, version string, build string, buildDate string) (*Config, error) {
-	// first load the server.yaml as the default config (the server.yaml from config)
-	defaultConfigValues, err := readConfig(logger, nil, "server", "yaml", "config", "./config", "../../config")
+	configValues, err := readConfig(logger, nil, "config", "yaml", "config", "./config", "../../config")
 	if err != nil {
 		return nil, err
 	}
-
-	configValues, err := readConfig(logger, defaultConfigValues, "config", "yaml", ".", "..")
-	// TODO: in production we need to find this file
-	// for now we ignore this error because there is no extra config when running locally
-	// if err != nil {
-	//	 return nil, err
-	// }
 
 	// now load the cluster config if found
 	// set up the secrets from the secrets directory
