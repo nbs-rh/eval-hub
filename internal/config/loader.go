@@ -75,9 +75,9 @@ func scanFolders(logger *slog.Logger, dirs ...string) ([]os.DirEntry, error) {
 
 func LoadProviderConfigs(logger *slog.Logger) (map[string]api.ProviderResource, error) {
 	providerConfigs := make(map[string]api.ProviderResource)
-	files, err := scanFolders(logger, "./config/providers", "../../config/providers")
+	files, err := scanFolders(logger, "config/providers", "./config/providers", "../../config/providers")
 	if err != nil {
-		return nil, err
+		return providerConfigs, err
 	}
 	for _, file := range files {
 		if file.IsDir() || !strings.HasSuffix(file.Name(), ".yaml") {
