@@ -69,7 +69,7 @@ func scanFolders(logger *slog.Logger, dirs ...string) ([]os.DirEntry, error) {
 		}
 		return files, nil
 	}
-	logger.Warn("No providers found", "directores", dirs)
+	logger.Warn("No providers found", "directories", dirs)
 	return []os.DirEntry{}, nil
 }
 
