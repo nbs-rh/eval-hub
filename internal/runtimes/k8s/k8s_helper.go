@@ -17,7 +17,7 @@ const KubernetesManifestsDir = "config/kubernetes"
 // Keeping this abstraction in one place allows all call sites to stay unchanged if we switch
 // to a different underlying Kubernetes client implementation.
 type KubernetesHelper struct {
-	clientset     kubernetes.Interface
+	clientset kubernetes.Interface
 }
 
 // NewKubernetesHelper builds a Kubernetes client (in-cluster config, then default kubeconfig)
@@ -39,9 +39,9 @@ func NewKubernetesHelper() (*KubernetesHelper, error) {
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return &KubernetesHelper{
-		clientset:     clientset,
+		clientset: clientset,
 	}, nil
 }
 
@@ -77,4 +77,3 @@ type CreateConfigMapOptions struct {
 	Labels      map[string]string
 	Annotations map[string]string
 }
-
