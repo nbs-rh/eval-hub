@@ -14,7 +14,7 @@ type K8sRuntime struct {
 
 // NewK8sRuntime creates a Kubernetes runtime.
 func NewK8sRuntime(logger *slog.Logger) (abstractions.Runtime, error) {
-	helper, err := k8s.NewKubernetesHelper()
+	helper, err := NewKubernetesHelper()
 	if err != nil {
 		return nil, err
 	}
