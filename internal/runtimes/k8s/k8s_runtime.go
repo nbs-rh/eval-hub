@@ -12,9 +12,12 @@ type K8sRuntime struct {
 	helper *KubernetesHelper
 }
 
-// NewK8sRuntime creates a Kubernetes runtime with the injected KubernetesHelper.
-// helper must be non-nil; create it with NewKubernetesHelper() when LocalMode is false.
-func NewK8sRuntime(logger *slog.Logger, helper *KubernetesHelper) (abstractions.Runtime, error) {
+// NewK8sRuntime creates a Kubernetes runtime.
+func NewK8sRuntime(logger *slog.Logger) (abstractions.Runtime, error) {
+	helper, err := k8s.NewKubernetesHelper()
+	if err != nil {
+		return nil, err
+	}
 	return &K8sRuntime{logger: logger, helper: helper}, nil
 }
 

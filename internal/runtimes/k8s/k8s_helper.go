@@ -52,6 +52,13 @@ func NewKubernetesHelper() (*KubernetesHelper, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	/*
+	DiscoveryClient = “ask the cluster what APIs/resources exist.”
+	RESTMapper = “use that to map Kind → resource name and scope.”
+	Dynamic client = “create this object using that resource name and scope.”
+	*/
+	// used to create arbitrary resources from YAML.
 	dynamicClient, err := dynamic.NewForConfig(config)
 	if err != nil {
 		return nil, err
@@ -60,7 +67,17 @@ func NewKubernetesHelper() (*KubernetesHelper, error) {
 	if err != nil {
 		return nil, err
 	}
+	// used to map group/version/kind to REST API endpoints. 
+	/*
+	memory.NewMemCacheClient is from k8s.io/client-go/discovery/cached/memory. 
+	“MemCache” here means an in-memory cache (in-process), not the Memcached server.
+	What it does:
+	- NewDeferredDiscoveryRESTMapper(memory.NewMemCacheClient(dc)) wraps the discovery client in a small in-memory cache so that:
+		- Group/version/resource lookups don’t hit the API server every time.
+		- Repeated REST mappings are served from memory.
+	*/
 	restMapper := restmapper.NewDeferredDiscoveryRESTMapper(memory.NewMemCacheClient(dc))
+	
 	return &KubernetesHelper{
 		clientset:     clientset,
 		dynamicClient: dynamicClient,
@@ -110,7 +127,11 @@ func (h *KubernetesHelper) CreateResourceFromFile(
 	filename string,
 	placeholders map[string]string,
 ) (*unstructured.Unstructured, error) {
-	path := filepath.Join(KubernetesManifestsDir, filename)
+	cleanPath := filepath.Clean(filename)
++	if filepath.IsAbs(cleanPath) || cleanPath == ".." || strings.HasPrefix(cleanPath, ".."+string(os.PathSeparator)) {
++		return nil, fmt.Errorf("invalid manifest filename: %q", filename)
++	}
++	path := filepath.Join(KubernetesManifestsDir, cleanPath)
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
