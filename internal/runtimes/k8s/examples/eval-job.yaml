@@ -1,0 +1,58 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: eval-job-001
+  namespace: evalhub
+  labels:
+    app: "evalhub"
+    component: "evaluation-job"
+    job-id: "001"
+    provider-id: "lm_evaluation_harness"
+    benchmark-id: "mmlu"
+spec:
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app: "evalhub"
+        component: "evaluation-job"
+        job-id: "001"
+        provider-id: "lm_evaluation_harness"
+        benchmark-id: "mmlu"
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: adapter
+          image: quay.io/eval-hub/adapter:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: JOB_ID
+              value: "001"
+            - name: EVALHUB_SERVICE_URL
+              value: "http://eval-hub"
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "2Gi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - "ALL"
+          volumeMounts:
+            - name: job-spec
+              mountPath: /meta/job.json
+              subPath: job.json
+              readOnly: true
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: job-spec
+          configMap:
+            name: eval-job-001-spec
+        - name: data
+          emptyDir: {}

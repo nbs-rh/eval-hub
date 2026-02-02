@@ -1,0 +1,46 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: eval-job-001-spec
+  namespace: evalhub
+  labels:
+    app: "evalhub"
+    component: "evaluation-job"
+    job-id: "001"
+    provider-id: "lm_evaluation_harness"
+    benchmark-id: "mmlu"
+data:
+  job.json: |
+    {
+      "id": "001",
+      "tenant": "acme",
+      "created_at": "2026-01-28T10:00:00Z",
+      "updated_at": "2026-01-28T10:05:00Z",
+      "model": {
+        "url": "http://model-server.models.svc.cluster.local:8000/v1",
+        "name": "example-model"
+      },
+      "benchmarks": [
+        {
+          "id": "mmlu",
+          "limit": 50,
+          "parameters": {
+            "max_tokens": 128,
+            "temperature": 0.2
+          }
+        }
+      ],
+      "collection": {
+        "id": "collection-1"
+      },
+      "experiment": {
+        "name": "eval-experiment",
+        "tags": {
+          "team": "evals",
+          "env": "dev"
+        }
+      },
+      "timeout_minutes": 30,
+      "retry_attempts": 2,
+      "callback_url": "https://example.org/eval/callback"
+    }
