@@ -47,7 +47,7 @@ func TestBuildJobSecurityContext(t *testing.T) {
 		benchmarkID:       "bench-1",
 		adapterImage:      "adapter:latest",
 		evalHubServiceURL: "http://eval-hub",
-		defaultEnv:        []api.ProviderEnvVar{},
+		defaultEnv:        []api.EnvVar{},
 	}
 
 	job, err := buildJob(cfg)

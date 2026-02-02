@@ -28,7 +28,7 @@ type jobConfig struct {
 	retryAttempts     int
 	adapterImage      string
 	evalHubServiceURL string
-	defaultEnv        []api.ProviderEnvVar
+	defaultEnv        []api.EnvVar
 	cpuRequest        string
 	memoryRequest     string
 	cpuLimit          string
@@ -77,7 +77,7 @@ func buildJobConfig(evaluation *api.EvaluationJobResource, provider *api.Provide
 		retryAttempts:     retryAttempts,
 		adapterImage:      runtime.Image,
 		evalHubServiceURL: evalHubServiceURL,
-		defaultEnv:        runtime.DefaultEnv,
+		defaultEnv:        runtime.Env,
 		cpuRequest:        cpuRequest,
 		memoryRequest:     memoryRequest,
 		cpuLimit:          cpuLimit,

@@ -64,3 +64,9 @@ type Page struct {
 	Limit      int   `json:"limit"`
 	TotalCount int   `json:"total_count"`
 }
+
+// EnvVar captures environment variables for the job template.
+type EnvVar struct {
+	Name  string `mapstructure:"name" yaml:"name"`
+	Value string `mapstructure:"value" yaml:"value"`
+}
