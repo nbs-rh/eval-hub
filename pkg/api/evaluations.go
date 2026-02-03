@@ -65,6 +65,10 @@ type EvaluationJobStatus struct {
 	Benchmarks []BenchmarkStatus `json:"benchmarks,omitempty"`
 }
 
+type StatusEvent struct {
+	StatusEvent *EvaluationJobStatus `json:"status_event" validate:"required"`
+}
+
 // EvaluationJobBenchmarkResult represents benchmark result in evaluation job
 type EvaluationJobBenchmarkResult struct {
 	ID          string         `json:"id"`
@@ -105,7 +109,7 @@ type EvaluationResource struct {
 type EvaluationJobResource struct {
 	Resource EvaluationResource `json:"resource"`
 	EvaluationJobConfig
-	Status  EvaluationJobStatus   `json:"status"`
+	Status  *EvaluationJobStatus  `json:"status"`
 	Results *EvaluationJobResults `json:"results,omitempty"`
 }
 

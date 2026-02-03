@@ -13,12 +13,15 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime/debug"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/Jeffail/gabs/v2"
+	"github.com/PaesslerAG/jsonpath"
 	"github.com/eval-hub/eval-hub/cmd/eval_hub/server"
 	"github.com/eval-hub/eval-hub/internal/config"
 	"github.com/eval-hub/eval-hub/internal/logging"
@@ -28,6 +31,10 @@ import (
 	"github.com/xeipuuv/gojsonschema"
 
 	"github.com/cucumber/godog"
+)
+
+const (
+	valuePrefix = "value:"
 )
 
 var (
@@ -58,6 +65,8 @@ type scenarioConfig struct {
 	lastId  string
 
 	assets map[string][]string
+
+	values map[string]string
 }
 
 func getLogger() *log.Logger {
@@ -66,11 +75,11 @@ func getLogger() *log.Logger {
 			path := filepath.Join("..", "..", "bin", "tests.log")
 			path, err := filepath.Abs(path)
 			if err != nil {
-				panic(fmt.Errorf("Failed to get absolute path: %v", err))
+				panic(logError(fmt.Errorf("Failed to get absolute path: %v", err)))
 			}
 			logOutput, err := os.Create(path)
 			if err != nil {
-				panic(fmt.Errorf("Failed to create log file: %v", err))
+				panic(logError(fmt.Errorf("Failed to create log file: %v", err)))
 			}
 			logger = log.New(logOutput, "", log.LstdFlags)
 		}
@@ -81,6 +90,11 @@ func getLogger() *log.Logger {
 func logDebug(format string, a ...any) {
 	fmt.Printf(format, a...)
 	getLogger().Printf(format, a...)
+}
+
+func logError(err error) error {
+	getLogger().Printf("Error:%s\n%s\n", err.Error(), string(debug.Stack()))
+	return err
 }
 
 func checkBaseURL(uri *url.URL, from string) {
@@ -100,7 +114,7 @@ func createApiFeature() (*apiFeature, error) {
 	if serverURL := os.Getenv("SERVER_URL"); serverURL != "" {
 		uri, err := url.Parse(serverURL)
 		if err != nil {
-			return nil, fmt.Errorf("Invalid SERVER_URL: %v", err)
+			return nil, logError(fmt.Errorf("Invalid SERVER_URL: %v", err))
 		}
 		checkBaseURL(uri, serverURL)
 		return &apiFeature{client: client, baseURL: uri}, nil
@@ -118,7 +132,7 @@ func createApiFeature() (*apiFeature, error) {
 	uri := fmt.Sprintf("http://localhost:%d", port)
 	baseURL, err := url.Parse(uri)
 	if err != nil {
-		panic(fmt.Errorf("Invalid baseURL: %v", err))
+		panic(logError(fmt.Errorf("Invalid baseURL: %v", err)))
 	}
 	checkBaseURL(baseURL, uri)
 
@@ -137,17 +151,17 @@ func (a *apiFeature) startLocalServer(port int) error {
 	}
 	validate, err := validation.NewValidator()
 	if err != nil {
-		return fmt.Errorf("failed to create validator: %w", err)
+		return logError(fmt.Errorf("failed to create validator: %w", err))
 	}
 	serviceConfig, err := config.LoadConfig(logger, "0.0.1", "local", time.Now().Format(time.RFC3339))
 	if err != nil {
-		return fmt.Errorf("failed to load service config: %w", err)
+		return logError(fmt.Errorf("failed to load service config: %w", err))
 	}
 	serviceConfig.Service.Port = port
 
 	storage, err := storage.NewStorage(serviceConfig.Database, logger)
 	if err != nil {
-		return fmt.Errorf("failed to create storage: %w", err)
+		return logError(fmt.Errorf("failed to create storage: %w", err))
 	}
 	logger.Info("Storage created.")
 
@@ -155,7 +169,7 @@ func (a *apiFeature) startLocalServer(port int) error {
 	providerConfigs, err := config.LoadProviderConfigs(logger, "../../../config/providers", "../../../../config/providers", "../../../../../config/providers")
 	if err != nil {
 		// we do this as no point trying to continue
-		return fmt.Errorf("failed to load provider configs: %w", err)
+		return logError(fmt.Errorf("failed to load provider configs: %w", err))
 	}
 
 	logger.Info("Providers loaded.")
@@ -163,7 +177,7 @@ func (a *apiFeature) startLocalServer(port int) error {
 	serviceConfig.Service.LocalMode = true // set local mode for testing
 	runtime, err := runtimes.NewRuntime(logger, serviceConfig, providerConfigs)
 	if err != nil {
-		return fmt.Errorf("failed to create runtime: %w", err)
+		return logError(fmt.Errorf("failed to create runtime: %w", err))
 	}
 
 	a.server, err = server.NewServer(logger, serviceConfig, providerConfigs, storage, validate, runtime)
@@ -216,15 +230,15 @@ func (tc *scenarioConfig) theServiceIsRunning(ctx context.Context) error {
 
 func (tc *scenarioConfig) checkHealthEndpoint() error {
 	if err := tc.iSendARequestTo("GET", "/api/v1/health"); err != nil {
-		return fmt.Errorf("failed to send health check request: %w for URL %s", err, tc.apiFeature.baseURL.String())
+		return logError(fmt.Errorf("failed to send health check request: %w for URL %s", err, tc.apiFeature.baseURL.String()))
 	}
 	if tc.response.StatusCode != 200 {
-		return fmt.Errorf("expected status 200, got %d", tc.response.StatusCode)
+		return logError(fmt.Errorf("expected status 200, got %d", tc.response.StatusCode))
 	}
 
 	match := "\"status\":\"healthy\""
 	if !strings.Contains(string(tc.body), match) {
-		return fmt.Errorf("expected body to contain %s, got %s", match, string(tc.body))
+		return logError(fmt.Errorf("expected body to contain %s, got %s", match, string(tc.body)))
 	}
 
 	return nil
@@ -238,7 +252,7 @@ func (tc *scenarioConfig) findFile(fileName string) (string, error) {
 	file := filepath.Join("test_data", fileName)
 	if _, err := os.Stat(file); os.IsNotExist(err) {
 		path, _ := os.Getwd()
-		return "", fmt.Errorf("test file %s not found in directory %s", fileName, path)
+		return "", logError(fmt.Errorf("test file %s not found in directory %s", fileName, path))
 	}
 	return file, nil
 }
@@ -288,7 +302,7 @@ func extractId(body []byte) (string, error) {
 	obj := make(map[string]interface{})
 	err := json.Unmarshal(body, &obj)
 	if err != nil {
-		return "", err
+		return "", logError(fmt.Errorf("failed to unmarshal body %s: %w", string(body), err))
 	}
 	if id, ok := obj["resource"].(map[string]any)["id"].(string); ok {
 		return id, nil
@@ -312,31 +326,75 @@ func extractIdFromPath(path string) string {
 }
 
 // firstPathSegment matches the first path segment after /api/v1/
-var firstPathSegment = regexp.MustCompile(`^/api/v1/([^/]+).*$`)
+var firstPathSegment = regexp.MustCompile(`^.*/api/v1/([^/]+).*$`)
 
 func getAssetName(path string) (string, error) {
 	if matches := firstPathSegment.FindStringSubmatch(path); len(matches) >= 2 {
 		return matches[1], nil
 	}
-	return "", fmt.Errorf("no first path segment found in path %s", path)
+	return "", logError(fmt.Errorf("no first path segment found in path %s", path))
 }
 
-func (tc *scenarioConfig) iSendARequestToWithBody(method, path, body string) error {
+func (tc *scenarioConfig) getId(id string) (string, error) {
+	if strings.HasPrefix(id, valuePrefix) {
+		n := strings.TrimPrefix(id, valuePrefix)
+		v := tc.values[n]
+		if v == "" {
+			return "", logError(fmt.Errorf("failed to find value %s", n))
+		}
+		return v, nil
+	}
+	return id, nil
+}
+
+func (tc *scenarioConfig) getEndpoint(path string) (string, error) {
+	check := true
+	for check {
+		if strings.Contains(path, fmt.Sprintf("{{%s", valuePrefix)) {
+			re := regexp.MustCompile(`\{\{([^}]*)\}\}`)
+			match := re.FindStringSubmatch(path)
+			if len(match) > 1 {
+				v, err := tc.getId(match[1])
+				if err != nil {
+					return "", logError(fmt.Errorf("failed to substitute value: %s", err.Error()))
+				}
+				path = strings.ReplaceAll(path, fmt.Sprintf("{{%s}}", match[1]), v)
+			} else {
+				// no more matches found
+				check = false
+			}
+		} else {
+			check = false
+		}
+	}
+
 	if strings.Contains(path, "{id}") {
 		if tc.lastId == "" {
-			return fmt.Errorf("last ID is not set")
+			return "", logError(fmt.Errorf("last ID is not set"))
 		}
 		path = strings.Replace(path, "{id}", tc.lastId, 1)
 	}
 
-	url := fmt.Sprintf("%s%s", tc.apiFeature.baseURL.String(), path)
-	tc.lastURL = url
+	endpoint := path
+	if !strings.HasPrefix(endpoint, tc.apiFeature.baseURL.String()) {
+		endpoint = fmt.Sprintf("%s%s", tc.apiFeature.baseURL.String(), path)
+	}
+
+	return endpoint, nil
+}
+
+func (tc *scenarioConfig) iSendARequestToWithBody(method, path, body string) error {
+	endpoint, err := tc.getEndpoint(path)
+	if err != nil {
+		return err
+	}
+	tc.lastURL = endpoint
 	entity, err := tc.getRequestBody(body)
 	if err != nil {
 		return err
 	}
-	logDebug("Sending %s request to %s\n", method, url)
-	req, err := http.NewRequest(method, url, entity)
+	logDebug("Sending %s request to %s\n", method, endpoint)
+	req, err := http.NewRequest(method, endpoint, entity)
 	if err != nil {
 		logDebug("Failed to create request: %v\n", err)
 		return err
@@ -354,10 +412,11 @@ func (tc *scenarioConfig) iSendARequestToWithBody(method, path, body string) err
 	}
 	defer tc.response.Body.Close()
 
-	logDebug("Response status %d for %s\n", tc.response.StatusCode, url)
+	logDebug("Response status %d for %s\n", tc.response.StatusCode, endpoint)
 
-	if method == http.MethodPost {
-		assetName, err := getAssetName(path)
+	// this is just for a create evaluation job request
+	if method == http.MethodPost && tc.response.StatusCode == http.StatusAccepted {
+		assetName, err := getAssetName(endpoint)
 		if err != nil {
 			return err
 		}
@@ -368,7 +427,7 @@ func (tc *scenarioConfig) iSendARequestToWithBody(method, path, body string) err
 				return err
 			}
 			if tc.lastId == "" {
-				return fmt.Errorf("response does not contain an ID in response %s", string(tc.body))
+				return logError(fmt.Errorf("response does not contain an ID in response %s", string(tc.body)))
 			}
 			tc.addAsset(assetName, tc.lastId)
 		default:
@@ -377,15 +436,15 @@ func (tc *scenarioConfig) iSendARequestToWithBody(method, path, body string) err
 	}
 
 	if method == http.MethodDelete {
-		assetName, err := getAssetName(path)
+		assetName, err := getAssetName(endpoint)
 		if err != nil {
 			return err
 		}
 		switch assetName {
 		case "evaluations":
-			id := extractIdFromPath(path)
+			id := extractIdFromPath(endpoint)
 			if id == "" {
-				return fmt.Errorf("no ID found in path %s", path)
+				return logError(fmt.Errorf("no ID found in path %s", endpoint))
 			}
 			tc.removeAsset(assetName, id)
 		default:
@@ -398,7 +457,7 @@ func (tc *scenarioConfig) iSendARequestToWithBody(method, path, body string) err
 
 func (tc *scenarioConfig) theResponseStatusShouldBe(status int) error {
 	if tc.response.StatusCode != status {
-		return fmt.Errorf("expected status %d, got %d with response %s", status, tc.response.StatusCode, string(tc.body))
+		return logError(fmt.Errorf("expected status %d, got %d with response %s", status, tc.response.StatusCode, string(tc.body)))
 	}
 	return nil
 }
@@ -406,12 +465,12 @@ func (tc *scenarioConfig) theResponseStatusShouldBe(status int) error {
 func (tc *scenarioConfig) theResponseShouldBeJSON() error {
 	contentType := tc.response.Header.Get("Content-Type")
 	if !strings.Contains(contentType, "application/json") {
-		return fmt.Errorf("expected JSON content type, got %s", contentType)
+		return logError(fmt.Errorf("expected JSON content type, got %s", contentType))
 	}
 
 	var js interface{}
 	if err := json.Unmarshal(tc.body, &js); err != nil {
-		return fmt.Errorf("response is not valid JSON: %v", err)
+		return logError(fmt.Errorf("response is not valid JSON: %v", err))
 	}
 
 	return nil
@@ -420,11 +479,11 @@ func (tc *scenarioConfig) theResponseShouldBeJSON() error {
 func (tc *scenarioConfig) theResponseShouldContainWithValue(key, value string) error {
 	var data map[string]interface{}
 	if err := json.Unmarshal(tc.body, &data); err != nil {
-		return err
+		return logError(err)
 	}
 
 	if data[key] != value {
-		return fmt.Errorf("expected %s to be %s, got %v", key, value, data[key])
+		return logError(fmt.Errorf("expected %s to be %s, got %v", key, value, data[key]))
 	}
 
 	return nil
@@ -433,11 +492,11 @@ func (tc *scenarioConfig) theResponseShouldContainWithValue(key, value string) e
 func (tc *scenarioConfig) theResponseShouldContain(key string) error {
 	var data map[string]interface{}
 	if err := json.Unmarshal(tc.body, &data); err != nil {
-		return err
+		return logError(err)
 	}
 
 	if _, ok := data[key]; !ok {
-		return fmt.Errorf("response does not contain key: %s", key)
+		return logError(fmt.Errorf("response does not contain key: %s", key))
 	}
 
 	return nil
@@ -446,7 +505,7 @@ func (tc *scenarioConfig) theResponseShouldContain(key string) error {
 func (tc *scenarioConfig) theResponseShouldContainPrometheusMetrics() error {
 	bodyStr := string(tc.body)
 	if !strings.Contains(bodyStr, "# HELP") || !strings.Contains(bodyStr, "# TYPE") {
-		return fmt.Errorf("response does not appear to be Prometheus metrics format")
+		return logError(fmt.Errorf("response does not appear to be Prometheus metrics format"))
 	}
 	return nil
 }
@@ -454,7 +513,7 @@ func (tc *scenarioConfig) theResponseShouldContainPrometheusMetrics() error {
 func (tc *scenarioConfig) theMetricsShouldInclude(metricName string) error {
 	bodyStr := string(tc.body)
 	if !strings.Contains(bodyStr, metricName) {
-		return fmt.Errorf("metrics do not include %s", metricName)
+		return logError(fmt.Errorf("metrics do not include %s", metricName))
 	}
 	return nil
 }
@@ -463,7 +522,7 @@ func (tc *scenarioConfig) theMetricsShouldShowRequestCountFor(path string) error
 	bodyStr := string(tc.body)
 	// Check if metrics contain the path
 	if !strings.Contains(bodyStr, path) {
-		return fmt.Errorf("metrics do not show requests for path %s", path)
+		return logError(fmt.Errorf("metrics do not show requests for path %s", path))
 	}
 	return nil
 }
@@ -500,16 +559,78 @@ func compareJSONSchema(expectedSchema string, actualResponse string) error {
 		for _, err := range result.Errors() {
 			fmt.Printf("- %s value = %s\n", err, err.Value())
 		}
-		return fmt.Errorf("the response %s does not match %s", asPrettyJson(actualResponse), expectedSchema)
+		return logError(fmt.Errorf("the response %s does not match %s", asPrettyJson(actualResponse), expectedSchema))
 	}
 	if result.Valid() {
 		return nil
 	}
-	return fmt.Errorf("failed to validate the response %s but no error detected when expecting %s", asPrettyJson(actualResponse), expectedSchema)
+	return logError(fmt.Errorf("failed to validate the response %s but no error detected when expecting %s", asPrettyJson(actualResponse), expectedSchema))
 }
 
 func (tc *scenarioConfig) theResponseShouldHaveSchemaAs(body *godog.DocString) error {
 	return compareJSONSchema(body.Content, string(tc.body))
+}
+
+func (tc *scenarioConfig) getJsonPath(jsonPath string) (string, error) {
+	var respMap map[string]interface{}
+	err := json.Unmarshal(tc.body, &respMap)
+	if err != nil {
+		return "", logError(err)
+	}
+
+	foundValue, err := jsonpath.Get(jsonPath, respMap)
+	if err != nil {
+		return "", logError(fmt.Errorf("failed to get JSON path %s in %s: %w", jsonPath, string(tc.body), err))
+	}
+
+	return fmt.Sprintf("%v", foundValue), nil
+}
+
+func (tc *scenarioConfig) theResponseShouldContainAtJSONPath(expectedValue string, jsonPath string) error {
+	foundValue, err := tc.getJsonPath(jsonPath)
+	if err != nil {
+		return logError(err)
+	}
+
+	// make this contains and not equals
+	// if foundValue == strings.TrimSpace(expectedValue) {
+	values := strings.Split(expectedValue, "|")
+	for _, value := range values {
+		if strings.Contains(foundValue, value) {
+			return nil
+		}
+	}
+
+	return logError(fmt.Errorf("expected %s to be %s but was %s", jsonPath, expectedValue, foundValue))
+}
+
+func getJsonPointer(path string) string {
+	if !strings.HasPrefix(path, "/") {
+		return strings.ReplaceAll(fmt.Sprintf("/%s", path), ".", "/")
+	}
+	return strings.ReplaceAll(path, ".", "/")
+}
+
+func (tc *scenarioConfig) theFieldShouldBeSaved(path string, name string) error {
+	jsonParsed, err := gabs.ParseJSON(tc.body)
+	if err != nil {
+		return logError(fmt.Errorf("failed to parse JSON response: %w", err))
+	}
+	// This directly uses a JSON pointer path
+	pathObj, err := jsonParsed.JSONPointer(getJsonPointer(path))
+	if err != nil {
+		return logError(fmt.Errorf("path %v does not exist in \n%s", path, string(tc.body)))
+	}
+	finalResult, ok := pathObj.Data().(string)
+	if !ok {
+		return logError(fmt.Errorf("expected %s to be a string but got %T", path, pathObj.Data()))
+	}
+	if strings.HasPrefix(name, valuePrefix) {
+		tc.values[strings.TrimPrefix(name, valuePrefix)] = finalResult
+	} else {
+		return logError(fmt.Errorf("unexpected value %s, should start with '%s'", name, valuePrefix))
+	}
+	return nil
 }
 
 func (tc *scenarioConfig) saveScenarioName(ctx context.Context, sc *godog.Scenario) (context.Context, error) {
@@ -529,11 +650,11 @@ func (tc *scenarioConfig) assetCleanup(ctx context.Context, sc *godog.Scenario, 
 			path := fmt.Sprintf("/api/v1/%s/%s?hard_delete=true", url, id)
 			err := tc.iSendARequestTo("DELETE", path)
 			if err != nil {
-				return ctx, fmt.Errorf("failed to delete asset %s with id '%s': %w", assetName, id, err)
+				return ctx, logError(fmt.Errorf("failed to delete asset %s with id '%s': %w", assetName, id, err))
 			}
 			err = tc.theResponseStatusShouldBe(204)
 			if err != nil {
-				return ctx, fmt.Errorf("failed to delete asset %s expected status %d but got %d: %w", tc.lastURL, 204, tc.response.StatusCode, err)
+				return ctx, logError(fmt.Errorf("failed to delete asset %s expected status %d but got %d: %w", tc.lastURL, 204, tc.response.StatusCode, err))
 			}
 			logDebug("Deleted asset %s with status %d\n", path, tc.response.StatusCode)
 		}
@@ -545,7 +666,7 @@ func (tc *scenarioConfig) assetCleanup(ctx context.Context, sc *godog.Scenario, 
 func createScenarioConfig(apiConfig *apiFeature) *scenarioConfig {
 	conf := new(scenarioConfig)
 	conf.assets = make(map[string][]string)
-
+	conf.values = make(map[string]string)
 	conf.apiFeature = apiConfig
 
 	return conf
@@ -554,7 +675,7 @@ func createScenarioConfig(apiConfig *apiFeature) *scenarioConfig {
 func setUpTestConf() {
 	apiFeature, err := createApiFeature()
 	if err != nil {
-		panic(fmt.Errorf("failed to create API feature: %v", err))
+		panic(logError(fmt.Errorf("failed to create API feature: %v", err)))
 	}
 	api = apiFeature
 }
@@ -597,10 +718,10 @@ func checkRegexes() {
 	for _, path := range paths {
 		name, err := getAssetName(path[0])
 		if err != nil {
-			panic(fmt.Errorf("failed to get asset name for path %s: %v", path, err))
+			panic(logError(fmt.Errorf("failed to get asset name for path %s: %v", path, err)))
 		}
 		if name != path[1] {
-			panic(fmt.Errorf("expected asset name %s for path %s, got %s", path[1], path[0], name))
+			panic(logError(fmt.Errorf("expected asset name %s for path %s, got %s", path[1], path[0], name)))
 		}
 	}
 }
@@ -637,4 +758,6 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 	ctx.Step(`^the metrics should show request count for "([^"]*)"$`, tc.theMetricsShouldShowRequestCountFor)
 	// Responses
 	ctx.Step(`^the response should have schema as:$`, tc.theResponseShouldHaveSchemaAs)
+	ctx.Step(`^the "([^"]*)" field in the response should be saved as "([^"]*)"$`, tc.theFieldShouldBeSaved)
+	ctx.Step(`^the response should contain the value "([^"]*)" at path "([^"]*)"$`, tc.theResponseShouldContainAtJSONPath)
 }
