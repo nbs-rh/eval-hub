@@ -78,6 +78,7 @@ type EvaluationJobBenchmarkResult struct {
 	CompletedAt *time.Time     `json:"completed_at,omitempty"`
 	Metrics     map[string]any `json:"metrics,omitempty"`
 	Error       *MessageInfo   `json:"error,omitempty"`
+	Artifacts   map[string]any `json:"artifacts,omitempty"`
 }
 
 // EvaluationJobResults represents results section for EvaluationJobResource
