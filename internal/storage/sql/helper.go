@@ -167,3 +167,68 @@ func createUpdateStatusStatement(driver, tableName string) (string, error) {
 		return "", getUnsupportedDriverError(driver)
 	}
 }
+
+// CreateUpdateEvaluationStatement returns a driver-specific UPDATE statement for the evaluations table,
+// setting only the non-empty fields (status, entity) and updated_at, filtered by id.
+// If status is empty, the query does not set status; if entityJSON is empty, the query does not set entity.
+// Returns the query, args in SET order then id, and an optional error.
+func CreateUpdateEvaluationStatement(driver, tableName, id, status, entityJSON string) (query string, args []any, err error) {
+	quotedTable := quoteIdentifier(driver, tableName)
+	quotedStatus := quoteIdentifier(driver, "status")
+	quotedEntity := quoteIdentifier(driver, "entity")
+	quotedUpdatedAt := quoteIdentifier(driver, "updated_at")
+	quotedID := quoteIdentifier(driver, "id")
+
+	var setParts []string
+	var argsList []any
+	if status != "" {
+		setParts = append(setParts, quotedStatus)
+		argsList = append(argsList, status)
+	}
+	if entityJSON != "" {
+		setParts = append(setParts, quotedEntity)
+		argsList = append(argsList, entityJSON)
+	}
+	setParts = append(setParts, fmt.Sprintf("%s = CURRENT_TIMESTAMP", quotedUpdatedAt))
+	argsList = append(argsList, id)
+
+	switch driver {
+	case POSTGRES_DRIVER:
+		return createUpdateEvaluationStatementForPostgres(setParts, argsList, query, quotedTable, quotedID, args)
+	case SQLITE_DRIVER:
+		return createUpdateEvaluationStatementForSQLite(setParts, query, quotedTable, quotedID, args, argsList)
+	default:
+		return "", nil, getUnsupportedDriverError(driver)
+	}
+}
+
+func createUpdateEvaluationStatementForSQLite(setParts []string, query string, quotedTable string, quotedID string, args []any, argsList []any) (string, []any, error) {
+	placeholders := make([]string, 0, len(setParts))
+	for i, part := range setParts {
+		if i < len(setParts)-1 {
+			placeholders = append(placeholders, part+" = ?")
+		} else {
+			placeholders = append(placeholders, part)
+		}
+	}
+	query = fmt.Sprintf(`UPDATE %s SET %s WHERE %s = ?;`,
+		quotedTable, strings.Join(placeholders, ", "), quotedID)
+	args = argsList
+	return query, args, nil
+}
+
+func createUpdateEvaluationStatementForPostgres(setParts []string, argsList []any, query string, quotedTable string, quotedID string, args []any) (string, []any, error) {
+	placeholders := make([]string, 0, len(setParts))
+	for i := range setParts {
+		if i < len(setParts)-1 {
+			placeholders = append(placeholders, fmt.Sprintf("%s = $%d", setParts[i], i+1))
+		} else {
+			placeholders = append(placeholders, setParts[i])
+		}
+	}
+	whereIdx := len(argsList)
+	query = fmt.Sprintf(`UPDATE %s SET %s WHERE %s = $%d;`,
+		quotedTable, strings.Join(placeholders, ", "), quotedID, whereIdx)
+	args = argsList
+	return query, args, nil
+}

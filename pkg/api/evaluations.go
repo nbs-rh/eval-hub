@@ -66,6 +66,7 @@ type EvaluationJobBenchmarkResult struct {
 	StartedAt   *time.Time     `json:"started_at,omitempty"`
 	CompletedAt *time.Time     `json:"completed_at,omitempty"`
 	Metrics     map[string]any `json:"metrics,omitempty"`
+	Artifacts   map[string]any `json:"artifacts,omitempty"`
 	Error       *string        `json:"error,omitempty"`
 }
 

@@ -41,7 +41,7 @@ func (s *SQLStorage) CreateEvaluationJob(executionContext *executioncontext.Exec
 	}
 	jobID := s.generateID()
 	executionContext.Logger.Info("Creating evaluation job", "id", jobID, "tenant", tenant, "status", api.StatePending)
-	_, err = s.exec(executionContext.Ctx, addEntityStatement, jobID, tenant, api.StatePending, string(evaluationJSON))
+	_, err = s.exec(executionContext.Ctx, nil, addEntityStatement, jobID, tenant, api.StatePending, string(evaluationJSON))
 	if err != nil {
 		return nil, err
 	}
@@ -68,7 +68,7 @@ func (s *SQLStorage) CreateEvaluationJob(executionContext *executioncontext.Exec
 	return evaluationResource, nil
 }
 
-func (s *SQLStorage) GetEvaluationJob(ctx *executioncontext.ExecutionContext, id string) (*api.EvaluationJobResource, error) {
+func (s *SQLStorage) GetEvaluationJob(ctx *executioncontext.ExecutionContext, txn *sql.Tx, id string) (*api.EvaluationJobResource, error) {
 	// Build the SELECT query
 	selectQuery, err := createGetEntityStatement(s.sqlConfig.Driver, TABLE_EVALUATIONS)
 	if err != nil {
@@ -81,7 +81,11 @@ func (s *SQLStorage) GetEvaluationJob(ctx *executioncontext.ExecutionContext, id
 	var statusStr string
 	var entityJSON string
 
-	err = s.pool.QueryRowContext(ctx.Ctx, selectQuery, id).Scan(&dbID, &createdAt, &updatedAt, &statusStr, &entityJSON)
+	if txn != nil {
+		err = txn.QueryRowContext(ctx.Ctx, selectQuery, id).Scan(&dbID, &createdAt, &updatedAt, &statusStr, &entityJSON)
+	} else {
+		err = s.pool.QueryRowContext(ctx.Ctx, selectQuery, id).Scan(&dbID, &createdAt, &updatedAt, &statusStr, &entityJSON)
+	}
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, serviceerrors.NewServiceError(messages.ResourceNotFound, "Type", "evaluation job", "ResourceId", id)
@@ -251,7 +255,7 @@ func (s *SQLStorage) DeleteEvaluationJob(ctx *executioncontext.ExecutionContext,
 	}
 
 	// Execute the DELETE query
-	_, err = s.exec(ctx.Ctx, deleteQuery, id)
+	_, err = s.exec(ctx.Ctx, nil, deleteQuery, id)
 	if err != nil {
 		ctx.Logger.Error("Failed to delete evaluation job", "error", err, "id", id)
 		return serviceerrors.NewServiceError(messages.DatabaseOperationFailed, "Type", "evaluation job", "ResourceId", id, "Error", err.Error())
@@ -285,7 +289,7 @@ func (s *SQLStorage) UpdateEvaluationJobStatus(ctx *executioncontext.ExecutionCo
 
 	// Execute the UPDATE query
 	statusStr := string(status.EvaluationJobState.State)
-	_, err = s.exec(ctx.Ctx, updateQuery, statusStr, id)
+	_, err = s.exec(ctx.Ctx, nil, updateQuery, statusStr, id)
 	if err != nil {
 		ctx.Logger.Error("Failed to update evaluation job status", "error", err, "id", id, "status", statusStr)
 		return serviceerrors.NewServiceError(messages.DatabaseOperationFailed, "Type", "evaluation job", "ResourceId", id, "Error", err.Error())
@@ -306,4 +310,127 @@ func (s *SQLStorage) UpdateEvaluationJobStatus(ctx *executioncontext.ExecutionCo
 
 	ctx.Logger.Info("Updated evaluation job status", "id", id, "status", statusStr)
 	return nil
+}
+
+func (s *SQLStorage) UpdateEvaluationJob(ctx *executioncontext.ExecutionContext, txn *sql.Tx, id string, status *api.EvaluationJobStatus, entityJSON string) error {
+	statusStr := string(status.EvaluationJobState.State)
+	updateQuery, args, err := CreateUpdateEvaluationStatement(s.sqlConfig.Driver, TABLE_EVALUATIONS, id, statusStr, entityJSON)
+	if err != nil {
+		return err
+	}
+
+	_, err = s.exec(ctx.Ctx, txn, updateQuery, args...)
+	if err != nil {
+		ctx.Logger.Error("Failed to update evaluation job", "error", err, "id", id, "status", statusStr, "entity", entityJSON)
+		return serviceerrors.NewServiceError(messages.DatabaseOperationFailed, "Type", "evaluation job", "ResourceId", id, "Error", err.Error())
+	}
+
+	ctx.Logger.Debug("Updated evaluation job", "id", id, "status", statusStr, "entity", entityJSON)
+	ctx.Logger.Info("Updated evaluation job", "id", id, "status", statusStr)
+	return nil
+}
+
+// UpdateEvaluationJobWithRunStatus runs in a transaction: fetches the job, merges RunStatusInternal into the entity, and persists.
+// Status update is a placeholder (current status is kept); replace with logic to set status from run status when needed.
+func (s *SQLStorage) UpdateEvaluationJobTransactional(ctx *executioncontext.ExecutionContext, id string, runStatus *api.RunStatusInternal) error {
+	txn, err := s.pool.BeginTx(ctx.Ctx, nil)
+	if err != nil {
+		ctx.Logger.Error("Failed to begin transaction", "error", err, "id", id)
+		return serviceerrors.NewServiceError(messages.DatabaseOperationFailed, "Type", "evaluation job", "ResourceId", id, "Error", err.Error())
+	}
+	defer func() { _ = txn.Rollback() }()
+
+	job, err := s.GetEvaluationJob(ctx, txn, id)
+	if err != nil {
+		return err
+	}
+
+	updateBenchMarkProgress(ctx, job, runStatus)
+
+	// Update entity: merge run_status into the entity JSON
+	/*entityJSON, err := json.Marshal(job.EvaluationJobConfig)
+	if err != nil {
+		ctx.Logger.Error("Failed to marshal entity for run status update", "error", err, "id", id)
+		return serviceerrors.NewServiceError(messages.DatabaseOperationFailed, "Type", "evaluation job", "ResourceId", id, "Error", err.Error())
+	}
+	entityMap := make(map[string]any)
+	if err := json.Unmarshal(entityJSON, &entityMap); err != nil {
+		ctx.Logger.Error("Failed to unmarshal entity for run status update", "error", err, "id", id)
+		return serviceerrors.NewServiceError(messages.JSONUnmarshalFailed, "Type", "evaluation job", "Error", err.Error())
+	}
+	runStatusBytes, err := json.Marshal(runStatus)
+	if err != nil {
+		return serviceerrors.NewServiceError(messages.DatabaseOperationFailed, "Type", "run status", "Error", err.Error())
+	}
+	var runStatusMap map[string]any
+	if err := json.Unmarshal(runStatusBytes, &runStatusMap); err != nil {
+		return serviceerrors.NewServiceError(messages.JSONUnmarshalFailed, "Type", "run status", "Error", err.Error())
+	}
+	entityMap["run_status"] = runStatusMap
+	updatedEntityJSON, err := json.Marshal(entityMap)
+	if err != nil {
+		return serviceerrors.NewServiceError(messages.DatabaseOperationFailed, "Type", "evaluation job entity", "Error", err.Error())
+	}
+	*/
+
+	// Placeholder: keep current status; replace with logic to set status from runStatus when needed.
+	newStatus := job.Status.EvaluationJobState.State
+	statusUpdate := &api.EvaluationJobStatus{
+		EvaluationJobState: api.EvaluationJobState{
+			State:   newStatus,
+			Message: job.Status.EvaluationJobState.Message,
+		},
+		Benchmarks: job.Status.Benchmarks,
+	}
+
+	updatedEntityJSON, err := json.Marshal(job)
+	if err != nil {
+		ctx.Logger.Error("Failed to marshal updated job resource", "error", err, "id", id)
+		return serviceerrors.NewServiceError(messages.DatabaseOperationFailed, "Type", "evaluation job", "ResourceId", id, "Error", err.Error())
+	}
+	if err := s.UpdateEvaluationJob(ctx, txn, id, statusUpdate, string(updatedEntityJSON)); err != nil {
+		return err
+	}
+
+	if err := txn.Commit(); err != nil {
+		ctx.Logger.Error("Failed to commit transaction", "error", err, "id", id)
+		return serviceerrors.NewServiceError(messages.DatabaseOperationFailed, "Type", "evaluation job", "ResourceId", id, "Error", err.Error())
+	}
+	return nil
+}
+
+func updateBenchMarkProgress(ctx *executioncontext.ExecutionContext, jobResource *api.EvaluationJobResource, runStatus *api.RunStatusInternal) {
+	findAndUpdateBenchmarkStatus(jobResource.Status.Benchmarks, runStatus)
+	findAndUpdateBenchmarkResults(jobResource.Results, runStatus)
+}
+
+func findAndUpdateBenchmarkStatus(benchmarkStatus []api.BenchmarkStatus, runStatus *api.RunStatusInternal) {
+	for _, status := range benchmarkStatus {
+		if status.Name == runStatus.StatusEvent.BenchmarkID || status.Name == runStatus.StatusEvent.BenchmarkName {
+			status.State = runStatus.StatusEvent.Status
+			if runStatus.StatusEvent.Artifacts != nil && runStatus.StatusEvent.Artifacts["logs"] != nil && runStatus.StatusEvent.Artifacts["logs"].(string) != "" {
+				status.Logs = &api.BenchmarkStatusLogs{Path: runStatus.StatusEvent.Artifacts["logs"].(string)}
+			}
+			if status.State == api.StatePending && runStatus.StatusEvent.Status == api.StateRunning {
+				status.StartedAt = runStatus.StatusEvent.StartedAt
+			}
+			if runStatus.StatusEvent.Status == api.StateCompleted {
+				status.CompletedAt = runStatus.StatusEvent.CompletedAt
+			}
+			if runStatus.StatusEvent.Status == api.StateFailed {
+				status.Message = runStatus.StatusEvent.ErrorMessage.MessageCode + ": " + runStatus.StatusEvent.ErrorMessage.Message
+			}
+		}
+	}
+}
+
+func findAndUpdateBenchmarkResults(benchmarkResults *api.EvaluationJobResults, runStatus *api.RunStatusInternal) {
+	for _, result := range benchmarkResults.Benchmarks {
+		if result.ID == runStatus.StatusEvent.BenchmarkID || result.Name == runStatus.StatusEvent.BenchmarkName {
+			if result.State == api.StateCompleted {
+				result.Metrics = runStatus.StatusEvent.Metrics
+				result.Artifacts = runStatus.StatusEvent.Artifacts
+			}
+		}
+	}
 }

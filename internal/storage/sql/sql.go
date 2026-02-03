@@ -96,8 +96,12 @@ func (s *SQLStorage) GetDatasourceName() string {
 	return s.sqlConfig.Driver
 }
 
-func (s *SQLStorage) exec(ctx context.Context, query string, args ...any) (sql.Result, error) {
-	return s.pool.ExecContext(ctx, query, args...)
+func (s *SQLStorage) exec(ctx context.Context, txn *sql.Tx, query string, args ...any) (sql.Result, error) {
+	if txn != nil {
+		return txn.ExecContext(ctx, query, args...)
+	} else {
+		return s.pool.ExecContext(ctx, query, args...)
+	}
 }
 
 func (s *SQLStorage) ensureSchema() error {
