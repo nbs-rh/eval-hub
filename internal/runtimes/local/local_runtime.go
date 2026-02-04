@@ -4,6 +4,7 @@ import (
 	"log/slog"
 
 	"github.com/eval-hub/eval-hub/internal/abstractions"
+	"github.com/eval-hub/eval-hub/internal/executioncontext"
 	"github.com/eval-hub/eval-hub/pkg/api"
 )
 
@@ -15,7 +16,7 @@ func NewLocalRuntime(logger *slog.Logger) (abstractions.Runtime, error) {
 	return &LocalRuntime{logger: logger}, nil
 }
 
-func (r *LocalRuntime) RunEvaluationJob(evaluation *api.EvaluationJobResource, storage *abstractions.Storage) error {
+func (r *LocalRuntime) RunEvaluationJob(_ *executioncontext.ExecutionContext, evaluation *api.EvaluationJobResource, storage *abstractions.Storage) error {
 	return nil
 }
 

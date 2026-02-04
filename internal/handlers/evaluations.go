@@ -103,7 +103,7 @@ func (h *Handlers) HandleCreateEvaluation(ctx *executioncontext.ExecutionContext
 					ctx.Logger.Error("panic in RunEvaluationJob goroutine", "panic", recovered, "stack", string(debug.Stack()), "job_id", job.Resource.ID)
 				}
 			}()
-			if err := h.runtime.RunEvaluationJob(job, &h.storage); err != nil {
+			if err := h.runtime.RunEvaluationJob(ctx, job, &h.storage); err != nil {
 				ctx.Logger.Error("RunEvaluationJob failed", "error", err, "job_id", job.Resource.ID)
 			}
 		}()
