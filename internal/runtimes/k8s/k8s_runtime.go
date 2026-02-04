@@ -5,11 +5,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"time"
 
 	"github.com/eval-hub/eval-hub/internal/abstractions"
 	"github.com/eval-hub/eval-hub/internal/constants"
-	"github.com/eval-hub/eval-hub/internal/executioncontext"
 	"github.com/eval-hub/eval-hub/pkg/api"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -21,6 +19,7 @@ type K8sRuntime struct {
 	logger    *slog.Logger
 	helper    *KubernetesHelper
 	providers map[string]api.ProviderResource
+	ctx       context.Context
 }
 
 // NewK8sRuntime creates a Kubernetes runtime.
@@ -32,19 +31,27 @@ func NewK8sRuntime(logger *slog.Logger, providerConfigs map[string]api.ProviderR
 	return &K8sRuntime{logger: logger, helper: helper, providers: providerConfigs}, nil
 }
 
-func (r *K8sRuntime) RunEvaluationJob(ctx *executioncontext.ExecutionContext, evaluation *api.EvaluationJobResource, storage *abstractions.Storage) error {
-	_ = storage
+func (r *K8sRuntime) WithLogger(logger *slog.Logger) abstractions.Runtime {
+	return &K8sRuntime{
+		logger:    logger,
+		helper:    r.helper,
+		providers: r.providers,
+		ctx:       r.ctx,
+	}
+}
+
+func (r *K8sRuntime) WithContext(ctx context.Context) abstractions.Runtime {
+	return &K8sRuntime{
+		logger:    r.logger,
+		helper:    r.helper,
+		providers: r.providers,
+		ctx:       ctx,
+	}
+}
+
+func (r *K8sRuntime) RunEvaluationJob(evaluation *api.EvaluationJobResource, storage *abstractions.Storage) error {
 	if evaluation == nil {
 		return fmt.Errorf("evaluation is required")
-	}
-
-	if ctx == nil || ctx.Logger == nil {
-		return fmt.Errorf("execution context logger is required")
-	}
-	logger := ctx.Logger
-	baseCtx := ctx.Ctx
-	if baseCtx == nil {
-		baseCtx = context.Background()
 	}
 
 	if len(evaluation.Benchmarks) == 0 {
@@ -66,26 +73,23 @@ func (r *K8sRuntime) RunEvaluationJob(ctx *executioncontext.ExecutionContext, ev
 		go func() {
 			for bench := range benchmarks {
 				select {
-				case <-baseCtx.Done():
-					if logger != nil {
-						logger.Warn(
-							"benchmark processing canceled",
-							"job_id", evaluation.Resource.ID,
-							"benchmark_id", bench.ID,
-						)
-					}
+				case <-r.ctx.Done():
+					r.logger.Warn(
+						"benchmark processing canceled",
+						"job_id", evaluation.Resource.ID,
+						"benchmark_id", bench.ID,
+					)
 					return
 				default:
 				}
-				if err := r.createBenchmarkResources(baseCtx, logger, evaluation, &bench); err != nil {
-					if logger != nil {
-						logger.Error(
-							"kubernetes job creation failed",
-							"error", err,
-							"job_id", evaluation.Resource.ID,
-							"benchmark_id", bench.ID,
-						)
-					}
+				if err := r.createBenchmarkResources(r.ctx, r.logger, evaluation, &bench); err != nil {
+					r.logger.Error(
+						"kubernetes job creation failed",
+						"error", err,
+						"job_id", evaluation.Resource.ID,
+						"benchmark_id", bench.ID,
+					)
+
 					// TODO update the benchmark status to failed
 					//r.persistJobFailure(logger, storage, evaluation, err)
 				}
@@ -148,13 +152,11 @@ func (r *K8sRuntime) createBenchmarkResources(ctx context.Context, logger *slog.
 	return nil
 }
 
-func (r *K8sRuntime) persistJobFailure(logger *slog.Logger, storage *abstractions.Storage, evaluation *api.EvaluationJobResource, runErr error) {
+func (r *K8sRuntime) persistJobFailure(storage *abstractions.Storage, evaluation *api.EvaluationJobResource, runErr error) {
 	if storage == nil || *storage == nil || evaluation == nil {
 		return
 	}
-	if logger == nil {
-		logger = r.logger
-	}
+
 	status := &api.StatusEvent{
 		StatusEvent: &api.EvaluationJobStatus{
 			EvaluationJobState: api.EvaluationJobState{
@@ -166,14 +168,9 @@ func (r *K8sRuntime) persistJobFailure(logger *slog.Logger, storage *abstraction
 			},
 		},
 	}
-	ctx := &executioncontext.ExecutionContext{
-		Ctx:       context.Background(),
-		RequestID: "",
-		Logger:    logger,
-		StartedAt: time.Now(),
-	}
-	if err := (*storage).UpdateEvaluationJobStatus(ctx, evaluation.Resource.ID, status); err != nil {
-		logger.Error("failed to update evaluation status", "error", err, "job_id", evaluation.Resource.ID)
+
+	if err := (*storage).UpdateEvaluationJobStatus(evaluation.Resource.ID, status); err != nil {
+		r.logger.Error("failed to update evaluation status", "error", err, "job_id", evaluation.Resource.ID)
 	}
 }
 

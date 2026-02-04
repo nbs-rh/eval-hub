@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/eval-hub/eval-hub/internal/abstractions"
-	"github.com/eval-hub/eval-hub/internal/executioncontext"
 	"github.com/eval-hub/eval-hub/pkg/api"
 	"github.com/go-viper/mapstructure/v2"
 	"github.com/google/uuid"
@@ -26,6 +25,8 @@ const (
 type SQLStorage struct {
 	sqlConfig *SQLDatabaseConfig
 	pool      *sql.DB
+	logger    *slog.Logger
+	ctx       context.Context
 }
 
 func NewStorage(config map[string]any, logger *slog.Logger) (abstractions.Storage, error) {
@@ -65,6 +66,8 @@ func NewStorage(config map[string]any, logger *slog.Logger) (abstractions.Storag
 	s := &SQLStorage{
 		sqlConfig: &sqlConfig,
 		pool:      pool,
+		logger:    logger,
+		ctx:       context.Background(),
 	}
 
 	// ping the database to verify the DSN provided by the user is valid and the server is accessible
@@ -96,8 +99,8 @@ func (s *SQLStorage) GetDatasourceName() string {
 	return s.sqlConfig.Driver
 }
 
-func (s *SQLStorage) exec(ctx context.Context, query string, args ...any) (sql.Result, error) {
-	return s.pool.ExecContext(ctx, query, args...)
+func (s *SQLStorage) exec(query string, args ...any) (sql.Result, error) {
+	return s.pool.ExecContext(s.ctx, query, args...)
 }
 
 func (s *SQLStorage) ensureSchema() error {
@@ -105,14 +108,14 @@ func (s *SQLStorage) ensureSchema() error {
 	if err != nil {
 		return err
 	}
-	if _, err := s.exec(context.Background(), schemas); err != nil {
+	if _, err := s.exec(schemas); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func (s *SQLStorage) getTenant(_ *executioncontext.ExecutionContext) (api.Tenant, error) {
+func (s *SQLStorage) getTenant() (api.Tenant, error) {
 	return "TODO", nil
 }
 
@@ -122,4 +125,22 @@ func (s *SQLStorage) generateID() string {
 
 func (s *SQLStorage) Close() error {
 	return s.pool.Close()
+}
+
+func (s *SQLStorage) WithLogger(logger *slog.Logger) abstractions.Storage {
+	return &SQLStorage{
+		sqlConfig: s.sqlConfig,
+		pool:      s.pool,
+		logger:    logger,
+		ctx:       s.ctx,
+	}
+}
+
+func (s *SQLStorage) WithContext(ctx context.Context) abstractions.Storage {
+	return &SQLStorage{
+		sqlConfig: s.sqlConfig,
+		pool:      s.pool,
+		logger:    s.logger,
+		ctx:       ctx,
+	}
 }

@@ -9,8 +9,6 @@ import (
 	"time"
 
 	"github.com/eval-hub/eval-hub/internal/abstractions"
-	"github.com/eval-hub/eval-hub/internal/executioncontext"
-	"github.com/eval-hub/eval-hub/internal/http_wrappers"
 	"github.com/eval-hub/eval-hub/pkg/api"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -20,59 +18,69 @@ import (
 )
 
 type fakeStorage struct {
+	logger *slog.Logger
 	called bool
+	ctx    context.Context
 }
 
 func (f *fakeStorage) GetDatasourceName() string  { return "fake" }
 func (f *fakeStorage) Ping(_ time.Duration) error { return nil }
-func (f *fakeStorage) CreateEvaluationJob(_ *executioncontext.ExecutionContext, _ *api.EvaluationJobConfig) (*api.EvaluationJobResource, error) {
+func (f *fakeStorage) CreateEvaluationJob(_ *api.EvaluationJobConfig) (*api.EvaluationJobResource, error) {
 	return nil, nil
 }
-func (f *fakeStorage) GetEvaluationJob(_ *executioncontext.ExecutionContext, _ string) (*api.EvaluationJobResource, error) {
+func (f *fakeStorage) GetEvaluationJob(_ string) (*api.EvaluationJobResource, error) {
 	return nil, nil
 }
-func (f *fakeStorage) GetEvaluationJobs(_ *executioncontext.ExecutionContext, _ http_wrappers.RequestWrapper, _ int, _ int, _ string) (*api.EvaluationJobResourceList, error) {
+func (f *fakeStorage) GetEvaluationJobs(int, _ int, _ string) (*abstractions.QueryResults[api.EvaluationJobResource], error) {
 	return nil, nil
 }
-func (f *fakeStorage) DeleteEvaluationJob(_ *executioncontext.ExecutionContext, _ string, _ bool) error {
+func (f *fakeStorage) DeleteEvaluationJob(_ string, _ bool) error {
 	return nil
 }
-func (f *fakeStorage) UpdateEvaluationJobStatus(_ *executioncontext.ExecutionContext, _ string, _ *api.StatusEvent) error {
+func (f *fakeStorage) UpdateEvaluationJobStatus(_ string, _ *api.StatusEvent) error {
 	f.called = true
 	return nil
 }
-func (f *fakeStorage) CreateCollection(_ *executioncontext.ExecutionContext, _ *api.CollectionResource) error {
+func (f *fakeStorage) CreateCollection(_ *api.CollectionResource) error {
 	return nil
 }
-func (f *fakeStorage) GetCollection(_ *executioncontext.ExecutionContext, _ string, _ bool) (*api.CollectionResource, error) {
+func (f *fakeStorage) GetCollection(_ string, _ bool) (*api.CollectionResource, error) {
 	return nil, nil
 }
-func (f *fakeStorage) GetCollections(_ *executioncontext.ExecutionContext, _ int, _ int) (*api.CollectionResourceList, error) {
+func (f *fakeStorage) GetCollections(_ int, _ int) (*abstractions.QueryResults[api.CollectionResource], error) {
 	return nil, nil
 }
-func (f *fakeStorage) UpdateCollection(_ *executioncontext.ExecutionContext, _ *api.CollectionResource) error {
+func (f *fakeStorage) UpdateCollection(_ *api.CollectionResource) error {
 	return nil
 }
-func (f *fakeStorage) DeleteCollection(_ *executioncontext.ExecutionContext, _ string) error {
+func (f *fakeStorage) DeleteCollection(_ string) error {
 	return nil
 }
 func (f *fakeStorage) Close() error { return nil }
 
+func (f *fakeStorage) WithLogger(logger *slog.Logger) abstractions.Storage {
+	return &fakeStorage{logger: logger, ctx: f.ctx}
+}
+func (f *fakeStorage) WithContext(ctx context.Context) abstractions.Storage {
+	return &fakeStorage{logger: f.logger, ctx: ctx}
+}
+
 func TestPersistJobFailureNoStorage(t *testing.T) {
-	runtime := &K8sRuntime{}
-	runtime.persistJobFailure(nil, nil, nil, context.Canceled)
+	runtime := &K8sRuntime{logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	runtime.persistJobFailure(nil, nil, context.Canceled)
 }
 
 func TestPersistJobFailureUpdatesStatus(t *testing.T) {
-	storage := &fakeStorage{}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	storage := &fakeStorage{logger: logger, ctx: context.Background()}
 	var store abstractions.Storage = storage
-	runtime := &K8sRuntime{logger: nil}
+	runtime := &K8sRuntime{logger: logger, ctx: context.Background()}
 	evaluation := &api.EvaluationJobResource{
 		Resource: api.EvaluationResource{
 			Resource: api.Resource{ID: "job-1"},
 		},
 	}
-	runtime.persistJobFailure(runtime.logger, &store, evaluation, context.Canceled)
+	runtime.persistJobFailure(&store, evaluation, context.Canceled)
 	if !storage.called {
 		t.Fatalf("expected UpdateEvaluationJobStatus to be called")
 	}

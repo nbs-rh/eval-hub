@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/eval-hub/eval-hub/internal/abstractions"
-	"github.com/eval-hub/eval-hub/internal/executioncontext"
 	"github.com/eval-hub/eval-hub/pkg/api"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -88,11 +87,8 @@ func TestRunEvaluationJobCreatesResources(t *testing.T) {
 	}
 
 	var storageNil = (*abstractions.Storage)(nil)
-	execCtx := &executioncontext.ExecutionContext{
-		Ctx:    context.Background(),
-		Logger: logger,
-	}
-	if err := runtime.RunEvaluationJob(execCtx, evaluation, storageNil); err != nil {
+
+	if err := runtime.RunEvaluationJob(evaluation, storageNil); err != nil {
 		t.Fatalf("RunEvaluationJob returned error: %v", err)
 	}
 
@@ -209,6 +205,7 @@ func TestRunEvaluationJobReturnsNilOnCreateFailure(t *testing.T) {
 
 	runtime := &K8sRuntime{
 		logger: logger,
+		ctx:    context.Background(),
 		helper: &KubernetesHelper{clientset: clientset},
 		providers: map[string]api.ProviderResource{
 			"lm_evaluation_harness": {
@@ -244,12 +241,8 @@ func TestRunEvaluationJobReturnsNilOnCreateFailure(t *testing.T) {
 		},
 	}
 
-	execCtx := &executioncontext.ExecutionContext{
-		Ctx:    context.Background(),
-		Logger: logger,
-	}
 	var storageNil = (*abstractions.Storage)(nil)
-	if err := runtime.RunEvaluationJob(execCtx, evaluation, storageNil); err != nil {
+	if err := runtime.RunEvaluationJob(evaluation, storageNil); err != nil {
 		t.Fatalf("expected nil error, got %v", err)
 	}
 

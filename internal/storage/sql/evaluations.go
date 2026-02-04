@@ -3,8 +3,6 @@ package sql
 import (
 	"database/sql"
 	"encoding/json"
-	"net/url"
-	"strconv"
 	"time"
 
 	// import the postgres driver - "pgx"
@@ -14,9 +12,8 @@ import (
 	// import the sqlite driver - "sqlite"
 	_ "modernc.org/sqlite"
 
+	"github.com/eval-hub/eval-hub/internal/abstractions"
 	"github.com/eval-hub/eval-hub/internal/constants"
-	"github.com/eval-hub/eval-hub/internal/executioncontext"
-	"github.com/eval-hub/eval-hub/internal/http_wrappers"
 	"github.com/eval-hub/eval-hub/internal/messages"
 	"github.com/eval-hub/eval-hub/internal/serviceerrors"
 	"github.com/eval-hub/eval-hub/pkg/api"
@@ -30,8 +27,8 @@ import (
 // the evaluation job is stored in the evaluations table as a JSON string
 // the evaluation job is returned as a EvaluationJobResource
 // This should use transactions etc and requires cleaning up
-func (s *SQLStorage) CreateEvaluationJob(executionContext *executioncontext.ExecutionContext, evaluation *api.EvaluationJobConfig) (*api.EvaluationJobResource, error) {
-	tenant, err := s.getTenant(executionContext)
+func (s *SQLStorage) CreateEvaluationJob(evaluation *api.EvaluationJobConfig) (*api.EvaluationJobResource, error) {
+	tenant, err := s.getTenant()
 	if err != nil {
 		return nil, err
 	}
@@ -44,8 +41,8 @@ func (s *SQLStorage) CreateEvaluationJob(executionContext *executioncontext.Exec
 		return nil, err
 	}
 	jobID := s.generateID()
-	executionContext.Logger.Info("Creating evaluation job", "id", jobID, "tenant", tenant, "status", api.StatePending)
-	_, err = s.exec(executionContext.Ctx, addEntityStatement, jobID, tenant, api.StatePending, string(evaluationJSON))
+	s.logger.Info("Creating evaluation job", "id", jobID, "tenant", tenant, "status", api.StatePending)
+	_, err = s.exec(addEntityStatement, jobID, tenant, api.StatePending, string(evaluationJSON))
 	if err != nil {
 		return nil, err
 	}
@@ -74,7 +71,7 @@ func (s *SQLStorage) CreateEvaluationJob(executionContext *executioncontext.Exec
 	return evaluationResource, nil
 }
 
-func (s *SQLStorage) GetEvaluationJob(ctx *executioncontext.ExecutionContext, id string) (*api.EvaluationJobResource, error) {
+func (s *SQLStorage) GetEvaluationJob(id string) (*api.EvaluationJobResource, error) {
 	// Build the SELECT query
 	selectQuery, err := createGetEntityStatement(s.sqlConfig.Driver, TABLE_EVALUATIONS)
 	if err != nil {
@@ -87,13 +84,13 @@ func (s *SQLStorage) GetEvaluationJob(ctx *executioncontext.ExecutionContext, id
 	var statusStr string
 	var entityJSON string
 
-	err = s.pool.QueryRowContext(ctx.Ctx, selectQuery, id).Scan(&dbID, &createdAt, &updatedAt, &statusStr, &entityJSON)
+	err = s.pool.QueryRowContext(s.ctx, selectQuery, id).Scan(&dbID, &createdAt, &updatedAt, &statusStr, &entityJSON)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, serviceerrors.NewServiceError(messages.ResourceNotFound, "Type", "evaluation job", "ResourceId", id)
 		}
 		// For now we differentiate between no rows found and other errors but this might be confusing
-		ctx.Logger.Error("Failed to get evaluation job", "error", err, "id", id)
+		s.logger.Error("Failed to get evaluation job", "error", err, "id", id)
 		return nil, serviceerrors.NewServiceError(messages.DatabaseOperationFailed, "Type", "evaluation job", "ResourceId", id, "Error", err.Error())
 	}
 
@@ -101,7 +98,7 @@ func (s *SQLStorage) GetEvaluationJob(ctx *executioncontext.ExecutionContext, id
 	var evaluationConfig api.EvaluationJobConfig
 	err = json.Unmarshal([]byte(entityJSON), &evaluationConfig)
 	if err != nil {
-		ctx.Logger.Error("Failed to unmarshal evaluation job entity", "error", err, "id", id)
+		s.logger.Error("Failed to unmarshal evaluation job entity", "error", err, "id", id)
 		return nil, serviceerrors.NewServiceError(messages.JSONUnmarshalFailed, "Type", "evaluation job", "Error", err.Error())
 	}
 
@@ -137,7 +134,7 @@ func (s *SQLStorage) GetEvaluationJob(ctx *executioncontext.ExecutionContext, id
 	return evaluationResource, nil
 }
 
-func (s *SQLStorage) GetEvaluationJobs(ctx *executioncontext.ExecutionContext, r http_wrappers.RequestWrapper, limit int, offset int, statusFilter string) (*api.EvaluationJobResourceList, error) {
+func (s *SQLStorage) GetEvaluationJobs(limit int, offset int, statusFilter string) (*abstractions.QueryResults[api.EvaluationJobResource], error) {
 	// Get total count (with status filter if provided)
 	countQuery, countArgs, err := createCountEntitiesStatement(s.sqlConfig.Driver, TABLE_EVALUATIONS, statusFilter)
 	if err != nil {
@@ -146,12 +143,12 @@ func (s *SQLStorage) GetEvaluationJobs(ctx *executioncontext.ExecutionContext, r
 
 	var totalCount int
 	if len(countArgs) > 0 {
-		err = s.pool.QueryRowContext(ctx.Ctx, countQuery, countArgs...).Scan(&totalCount)
+		err = s.pool.QueryRowContext(s.ctx, countQuery, countArgs...).Scan(&totalCount)
 	} else {
-		err = s.pool.QueryRowContext(ctx.Ctx, countQuery).Scan(&totalCount)
+		err = s.pool.QueryRowContext(s.ctx, countQuery).Scan(&totalCount)
 	}
 	if err != nil {
-		ctx.Logger.Error("Failed to count evaluation jobs", "error", err)
+		s.logger.Error("Failed to count evaluation jobs", "error", err)
 		return nil, serviceerrors.NewServiceError(messages.QueryFailed, "Type", "evaluation jobs", "Error", err.Error())
 	}
 
@@ -162,9 +159,9 @@ func (s *SQLStorage) GetEvaluationJobs(ctx *executioncontext.ExecutionContext, r
 	}
 
 	// Query the database
-	rows, err := s.pool.QueryContext(ctx.Ctx, listQuery, listArgs...)
+	rows, err := s.pool.QueryContext(s.ctx, listQuery, listArgs...)
 	if err != nil {
-		ctx.Logger.Error("Failed to list evaluation jobs", "error", err)
+		s.logger.Error("Failed to list evaluation jobs", "error", err)
 		return nil, serviceerrors.NewServiceError(messages.QueryFailed, "Type", "evaluation jobs", "Error", err.Error())
 	}
 	defer rows.Close()
@@ -179,7 +176,7 @@ func (s *SQLStorage) GetEvaluationJobs(ctx *executioncontext.ExecutionContext, r
 
 		err = rows.Scan(&dbID, &createdAt, &updatedAt, &statusStr, &entityJSON)
 		if err != nil {
-			ctx.Logger.Error("Failed to scan evaluation job row", "error", err)
+			s.logger.Error("Failed to scan evaluation job row", "error", err)
 			return nil, serviceerrors.NewServiceError(messages.DatabaseOperationFailed, "Type", "evaluation job", "ResourceId", dbID, "Error", err.Error())
 		}
 
@@ -187,7 +184,7 @@ func (s *SQLStorage) GetEvaluationJobs(ctx *executioncontext.ExecutionContext, r
 		var evaluationConfig api.EvaluationJobConfig
 		err = json.Unmarshal([]byte(entityJSON), &evaluationConfig)
 		if err != nil {
-			ctx.Logger.Error("Failed to unmarshal evaluation job entity", "error", err, "id", dbID)
+			s.logger.Error("Failed to unmarshal evaluation job entity", "error", err, "id", dbID)
 			return nil, serviceerrors.NewServiceError(messages.JSONUnmarshalFailed, "Type", "evaluation job", "Error", err.Error())
 		}
 
@@ -223,41 +220,17 @@ func (s *SQLStorage) GetEvaluationJobs(ctx *executioncontext.ExecutionContext, r
 	}
 
 	if err = rows.Err(); err != nil {
-		ctx.Logger.Error("Error iterating evaluation job rows", "error", err)
+		s.logger.Error("Error iterating evaluation job rows", "error", err)
 		return nil, serviceerrors.NewServiceError(messages.QueryFailed, "Type", "evaluation jobs", "Error", err.Error())
 	}
 
-	// Calculate pagination info
-	hasNext := offset+limit < totalCount
-	var nextHref *api.HRef
-	if hasNext {
-		href, err := url.Parse(r.URI())
-		if err != nil {
-			ctx.Logger.Error("Failed to parse request URI", "uri", r.URI(), "error", err)
-			return nil, serviceerrors.NewServiceError(messages.InternalServerError, "Error", err.Error())
-		}
-		q := href.Query()
-		if !q.Has("offset") {
-			q.Add("offset", strconv.Itoa(offset+limit))
-		} else {
-			q.Set("offset", strconv.Itoa(offset+limit))
-		}
-		href.RawQuery = q.Encode()
-		nextHref = &api.HRef{Href: href.String()}
-	}
-
-	return &api.EvaluationJobResourceList{
-		Page: api.Page{
-			First:      &api.HRef{Href: r.URI()},
-			Next:       nextHref,
-			Limit:      limit,
-			TotalCount: totalCount,
-		},
-		Items: items,
+	return &abstractions.QueryResults[api.EvaluationJobResource]{
+		Items:       items,
+		TotalStored: totalCount,
 	}, nil
 }
 
-func (s *SQLStorage) DeleteEvaluationJob(ctx *executioncontext.ExecutionContext, id string, hardDelete bool) error {
+func (s *SQLStorage) DeleteEvaluationJob(id string, hardDelete bool) error {
 	if !hardDelete {
 		statusEvent := &api.StatusEvent{
 			StatusEvent: &api.EvaluationJobStatus{
@@ -270,7 +243,7 @@ func (s *SQLStorage) DeleteEvaluationJob(ctx *executioncontext.ExecutionContext,
 				},
 			},
 		}
-		return s.UpdateEvaluationJobStatus(ctx, id, statusEvent)
+		return s.UpdateEvaluationJobStatus(id, statusEvent)
 	}
 
 	// Build the DELETE query
@@ -280,9 +253,9 @@ func (s *SQLStorage) DeleteEvaluationJob(ctx *executioncontext.ExecutionContext,
 	}
 
 	// Execute the DELETE query
-	_, err = s.exec(ctx.Ctx, deleteQuery, id)
+	_, err = s.exec(deleteQuery, id)
 	if err != nil {
-		ctx.Logger.Error("Failed to delete evaluation job", "error", err, "id", id)
+		s.logger.Error("Failed to delete evaluation job", "error", err, "id", id)
 		return serviceerrors.NewServiceError(messages.DatabaseOperationFailed, "Type", "evaluation job", "ResourceId", id, "Error", err.Error())
 	}
 
@@ -299,11 +272,11 @@ func (s *SQLStorage) DeleteEvaluationJob(ctx *executioncontext.ExecutionContext,
 	}
 	*/
 
-	ctx.Logger.Info("Deleted evaluation job", "id", id, "hardDelete", hardDelete)
+	s.logger.Info("Deleted evaluation job", "id", id, "hardDelete", hardDelete)
 	return nil
 }
 
-func (s *SQLStorage) UpdateEvaluationJobStatus(ctx *executioncontext.ExecutionContext, id string, status *api.StatusEvent) error {
+func (s *SQLStorage) UpdateEvaluationJobStatus(id string, status *api.StatusEvent) error {
 	// Build the UPDATE query
 	updateQuery, err := createUpdateStatusStatement(s.sqlConfig.Driver, TABLE_EVALUATIONS)
 	if err != nil {
@@ -314,9 +287,9 @@ func (s *SQLStorage) UpdateEvaluationJobStatus(ctx *executioncontext.ExecutionCo
 
 	// Execute the UPDATE query
 	statusStr := string(status.StatusEvent.EvaluationJobState.State)
-	_, err = s.exec(ctx.Ctx, updateQuery, statusStr, id)
+	_, err = s.exec(updateQuery, statusStr, id)
 	if err != nil {
-		ctx.Logger.Error("Failed to update evaluation job status", "error", err, "id", id, "status", statusStr)
+		s.logger.Error("Failed to update evaluation job status", "error", err, "id", id, "status", statusStr)
 		return serviceerrors.NewServiceError(messages.DatabaseOperationFailed, "Type", "evaluation job", "ResourceId", id, "Error", err.Error())
 	}
 
@@ -333,6 +306,6 @@ func (s *SQLStorage) UpdateEvaluationJobStatus(ctx *executioncontext.ExecutionCo
 	}
 	*/
 
-	ctx.Logger.Info("Updated evaluation job status", "id", id, "status", statusStr)
+	s.logger.Info("Updated evaluation job status", "id", id, "status", statusStr)
 	return nil
 }
