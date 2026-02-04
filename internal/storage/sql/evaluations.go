@@ -405,7 +405,7 @@ func updateOverallJobStatus(job *api.EvaluationJobResource) {
 	failureMessage := ""
 	for _, benchmark := range job.Status.Benchmarks {
 		benchmarkStates[benchmark.State]++
-		if benchmark.State == api.StateFailed {
+		if benchmark.State == api.StateFailed && benchmark.Message != nil {
 			failureMessage += "Benchmark " + benchmark.Name + " failed with message: " + benchmark.Message.Message + "\n"
 		}
 	}
