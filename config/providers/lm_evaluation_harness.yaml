@@ -13,9 +13,9 @@ runtime:
     memory_request: 128Mi
     cpu_limit: 500m
     memory_limit: 1Gi
-    env_vars:
-      # Default environment variables
-      VAR_NAME: VALUE
+    env:
+      - name: VAR_NAME
+        value: VALUE
   local:
     # reserved for local runtime
 

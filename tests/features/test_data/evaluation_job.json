@@ -5,7 +5,7 @@
     "benchmarks": [
     {
       "id": "abc",
-      "provider_id": "string",
+      "provider_id": "garak",
       "config": {}
     }
   ]
