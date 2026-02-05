@@ -1,5 +1,12 @@
 {
     "model": {
         "url": "http://test.com", "name": "test"
+    },
+    "benchmarks": [
+    {
+      "id": "abc",
+      "provider_id": "string",
+      "config": {}
     }
+  ]
 }
