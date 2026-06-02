@@ -52,7 +52,7 @@ RUN CGO_ENABLED=1 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} GOEXPERIMENT=stri
     ./cmd/evalhub_mcp
 
 # Runtime stage
-FROM registry.access.redhat.com/ubi9/ubi-minimal@sha256:d1578df342655d728de7c0850a2bea216193143486891362bf3e7793feedf6a8
+FROM registry.access.redhat.com/ubi9/ubi-minimal@sha256:ae09ecc3d754bc1726cbda3e2599cc7839e09fe1cc547ce173cf669b645be3cc
 
 # Create user and app directory
 RUN groupadd -g 1000 evalhub && \
