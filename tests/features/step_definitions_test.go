@@ -31,6 +31,7 @@ import (
 	"github.com/eval-hub/eval-hub/internal/eval_hub/storage"
 	"github.com/eval-hub/eval-hub/internal/eval_hub/validation"
 	"github.com/eval-hub/eval-hub/internal/logging"
+	"github.com/eval-hub/eval-hub/internal/testhelpers"
 	pkgapi "github.com/eval-hub/eval-hub/pkg/api"
 	"github.com/xeipuuv/gojsonschema"
 
@@ -194,7 +195,11 @@ func (a *apiFeature) startLocalServer(port int) error {
 		return err
 	}
 	validate := validation.NewValidator()
-	serviceConfig, err := config.LoadConfig(logger, "0.4.1", "local", time.Now().Format(time.RFC3339))
+	version, err := testhelpers.RepoVersion()
+	if err != nil {
+		return logError(fmt.Errorf("read VERSION: %w", err))
+	}
+	serviceConfig, err := config.LoadConfig(logger, version, "local", time.Now().Format(time.RFC3339), "")
 	if err != nil {
 		return logError(fmt.Errorf("failed to load service config: %w", err))
 	}
@@ -568,13 +573,15 @@ func (tc *scenarioConfig) substituteValues(body string) (string, error) {
 				body = strings.ReplaceAll(body, fmt.Sprintf("{{%s}}", match[1]), experimentName)
 			} else if raw, ok := strings.CutPrefix(match[1], envPrefix); ok {
 				envName, fallback, hasFallback := strings.Cut(raw, "|")
-				value, ok := os.LookupEnv(envName)
-				if !ok {
-					if hasFallback {
-						value = fallback
-					} else {
-						value = ""
-					}
+				var value string
+				if v, found := gpuTestSuiteSubstValue(envName); found {
+					value = v
+				} else if envValue, envOk := os.LookupEnv(envName); envOk {
+					value = envValue
+				} else if hasFallback {
+					value = fallback
+				} else {
+					value = ""
 				}
 				tc.logDebug("Substituting value '%s' with '%s'\n", match[1], value)
 				body = strings.ReplaceAll(body, fmt.Sprintf("{{%s}}", match[1]), value)

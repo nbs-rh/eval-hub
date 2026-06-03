@@ -397,6 +397,7 @@ Feature: Evaluation Jobs
     When I send a DELETE request to "/api/v1/evaluations/collections/{{value:collection_id}}?hard_delete=true"
     Then the response code should be 204
 
+  @slow
   Scenario: Create threshold-zero collection then submit job and verify completion
     Given the service is running
     When I send a POST request to "/api/v1/evaluations/collections" with body:
@@ -1020,6 +1021,7 @@ Feature: Evaluation Jobs
     And the response should contain the value "resource_not_found" at path "$.message_code"
 
   @negative
+  # Expected to fail on 3.5 EA1 builds - was fixed in 3.5 EA2 (RHOAIENG-62529)
   Scenario: Cannot override OOB collection benchmark with invalid provider_id
     Given the service is running
     When I send a POST request to "/api/v1/evaluations/jobs" with body:
@@ -1104,6 +1106,7 @@ Feature: Evaluation Jobs
     And the response should contain the value "request_validation_failed" at path "$.message_code"
 
   @negative
+  # Expected to fail on 3.5 EA1 builds - was fixed in 3.5 EA2 (RHOAIENG-62531)
   Scenario: Cannot override OOB collection benchmark with incorrect benchmark_id
     Given the service is running
     When I send a POST request to "/api/v1/evaluations/jobs" with body:
@@ -1504,8 +1507,6 @@ Feature: Evaluation Jobs
 
   @kueue
   @negative
-  @ignore
-  # https://redhat.atlassian.net/browse/RHOAIENG-61584 - will remove the ignore tag once fix is deployed on the cluster and verified
   Scenario: Queue name with special characters is rejected
     Given the service is running
     When I send a POST request to "/api/v1/evaluations/jobs" with body:

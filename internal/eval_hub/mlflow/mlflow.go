@@ -19,6 +19,8 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
+const workspaceProbeTimeout = 5 * time.Second
+
 func NewMLFlowClient(config *config.Config, logger *slog.Logger) (*mlflowclient.Client, error) {
 	url := ""
 	if config.MLFlow != nil && config.MLFlow.TrackingURI != "" {
@@ -93,12 +95,6 @@ func NewMLFlowClient(config *config.Config, logger *slog.Logger) (*mlflowclient.
 		logger.Info("MLflow static auth token configured (fallback)")
 	}
 
-	// Set workspace if configured
-	if config.MLFlow.Workspace != "" {
-		client = client.WithWorkspace(config.MLFlow.Workspace)
-		logger.Info("MLflow workspace configured", "workspace", config.MLFlow.Workspace)
-	}
-
 	if config.IsOTELEnabled() {
 		currentHTTPClient := client.GetHTTPClient()
 		client = client.WithHTTPClient(&http.Client{
@@ -106,6 +102,32 @@ func NewMLFlowClient(config *config.Config, logger *slog.Logger) (*mlflowclient.
 			Timeout:   currentHTTPClient.Timeout,
 		})
 		logger.Info("Enabled OTEL transport for MLFlow client")
+	}
+
+	probeCtx, cancel := context.WithTimeout(context.Background(), workspaceProbeTimeout)
+	defer cancel()
+
+	workspacesEnabled, err := client.WithContext(probeCtx).ProbeWorkspacesEnabled()
+	if err != nil {
+		logger.Warn(
+			"Could not probe MLflow workspace support; workspace headers will not be sent",
+			"error", err.Error(),
+		)
+		workspacesEnabled = false
+	}
+	client = client.WithWorkspacesSupport(workspacesEnabled)
+	logger.Info("MLflow workspace support probed", "workspaces_enabled", workspacesEnabled)
+
+	if config.MLFlow.Workspace != "" {
+		if workspacesEnabled {
+			client = client.WithWorkspace(config.MLFlow.Workspace)
+			logger.Info("MLflow workspace configured", "workspace", config.MLFlow.Workspace)
+		} else {
+			logger.Warn(
+				"MLFLOW_WORKSPACE is set but the MLflow server does not support workspaces; ignoring",
+				"workspace", config.MLFlow.Workspace,
+			)
+		}
 	}
 
 	logger.Info("MLFlow tracking enabled", "mlflow_experiment_url", client.GetExperimentsURL())
@@ -160,6 +182,10 @@ func GetOrCreateExperimentID(mlflowClient *mlflowclient.Client, jobConfig *api.E
 
 	if mlflowClient == nil {
 		return "", "", serviceerrors.NewServiceError(messages.MLFlowRequiredForExperiment)
+	}
+
+	if err := mlflowClient.EnsureWorkspace(); err != nil {
+		return "", "", serviceerrors.NewServiceError(messages.MLFlowRequestFailed, "Error", err.Error())
 	}
 
 	mlflowExperiment, err := mlflowClient.GetExperimentByName(jobConfig.Experiment.Name)
