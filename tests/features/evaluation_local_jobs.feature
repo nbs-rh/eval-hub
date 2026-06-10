@@ -7,12 +7,14 @@ Feature: Evaluation Jobs
 
   Background:
     Given I set the header "X-Tenant" to "{{env:X_TENANT|test-tenant}}"
+    And I set the header "X-User" to "{{env:X_USER|test-user}}"
     And I set the wait deadline to "{{env:WAIT_DEADLINE|30m}}"
     And the model endpoint is reachable
 
   @gha-wheel-sanity
   Scenario: Create an evaluation job and wait for completion
     Given the service is running
+    And I set the wait interval to "5s"
     When I send a POST request to "/api/v1/evaluations/jobs" with body "file:/evaluation_job.json"
     Then the response code should be 202
     And I wait for the evaluation job status to be "completed"

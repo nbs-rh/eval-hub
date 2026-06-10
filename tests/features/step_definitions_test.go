@@ -253,7 +253,6 @@ func (a *apiFeature) startLocalServer(port int) error {
 
 	a.server, err = server.NewServer(logger,
 		serviceConfig,
-		nil,
 		storage,
 		validate,
 		runtime,
@@ -463,19 +462,27 @@ func (tc *scenarioConfig) iSendARequestTo(method, path string) error {
 	return tc.iSendARequestToWithBody(method, path, "")
 }
 
-func (tc *scenarioConfig) iSetWaitDeadlineTo(paramValue string) error {
+func (tc *scenarioConfig) setDuration(dest *time.Duration, fieldName, paramValue string) error {
 	value, err := tc.getValue(paramValue)
 	if err != nil {
 		return err
 	}
-	tc.waitDeadline, err = time.ParseDuration(value)
+	*dest, err = time.ParseDuration(value)
 	if err != nil {
 		return tc.logError(fmt.Errorf("failed to parse duration %q: %w", value, err))
 	}
-	if tc.waitDeadline <= 0 {
-		return tc.logError(fmt.Errorf("wait deadline must be positive, got %q (%v)", value, tc.waitDeadline))
+	if *dest <= 0 {
+		return tc.logError(fmt.Errorf("%s must be positive, got %q (%v)", fieldName, value, *dest))
 	}
 	return nil
+}
+
+func (tc *scenarioConfig) iSetWaitDeadlineTo(paramValue string) error {
+	return tc.setDuration(&tc.waitDeadline, "wait deadline", paramValue)
+}
+
+func (tc *scenarioConfig) iSetWaitIntervalTo(paramValue string) error {
+	return tc.setDuration(&tc.waitInterval, "wait interval", paramValue)
 }
 
 func (tc *scenarioConfig) iWaitForEvaluationJobStatus(expectedStatus string) error {
@@ -522,6 +529,14 @@ func (tc *scenarioConfig) iWaitForEvaluationJobStatus(expectedStatus string) err
 }
 
 var errTestFileNotFound = errors.New("test file not found")
+
+// fvtBenchmarkTokenizer returns the expected benchmark tokenizer for FVT assertions and payloads.
+func fvtBenchmarkTokenizer() string {
+	if strings.Contains(strings.ToLower(os.Getenv("ENVIRONMENT_ID")), "disconnected") {
+		return "/test_data/tokenizer"
+	}
+	return "google/flan-t5-small"
+}
 
 func (tc *scenarioConfig) findFile(fileName string) (string, error) {
 	file := filepath.Join(testDataRoot(), fileName)
@@ -576,6 +591,8 @@ func (tc *scenarioConfig) substituteValues(body string) (string, error) {
 				var value string
 				if v, found := gpuTestSuiteSubstValue(envName); found {
 					value = v
+				} else if envName == "FVT_BENCHMARK_TOKENIZER" {
+					value = fvtBenchmarkTokenizer()
 				} else if envValue, envOk := os.LookupEnv(envName); envOk {
 					value = envValue
 				} else if hasFallback {
@@ -868,6 +885,13 @@ func (tc *scenarioConfig) iSendARequestImpl(method, path, body, caller string) e
 func (tc *scenarioConfig) theResponseStatusShouldBe(status int) error {
 	if tc.response.StatusCode != status {
 		return tc.logError(fmt.Errorf("expected status %d, got %d for request %s %s with response %s", status, tc.response.StatusCode, tc.lastMethod, tc.lastURL, string(tc.body)))
+	}
+	return nil
+}
+
+func (tc *scenarioConfig) theResponseStatusShouldBeOr(status1, status2 int) error {
+	if (tc.response.StatusCode != status1) && (tc.response.StatusCode != status2) {
+		return tc.logError(fmt.Errorf("expected status %d or %d, got %d for request %s %s with response %s", status1, status2, tc.response.StatusCode, tc.lastMethod, tc.lastURL, string(tc.body)))
 	}
 	return nil
 }
@@ -1497,6 +1521,7 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 	ctx.Step(`^I send a (POST|PUT|PATCH) request to "([^"]*)" with body "([^"]*)"$`, tc.iSendARequestToWithBody)
 	ctx.Step(`^I send a (POST|PUT|PATCH) request to "([^"]*)" with body:$`, tc.iSendARequestToWithInlineBody)
 	ctx.Step(`^the response code should be (\d+)$`, tc.theResponseStatusShouldBe)
+	ctx.Step(`^the response code should be (\d+) or (\d+)$`, tc.theResponseStatusShouldBeOr)
 	ctx.Step(`^the response should contain "([^"]*)" with value "([^"]*)"$`, tc.theResponseShouldContainWithValue)
 	ctx.Step(`^the response should contain "([^"]*)"$`, tc.theResponseShouldContain)
 	ctx.Step(`^the response should be JSON$`, tc.theResponseShouldBeJSON)
@@ -1519,6 +1544,7 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 	ctx.Step(`^the array at path "([^"]*)" in the response should have length at least "([^"]*)"$`, tc.theArrayAtPathInResponseShouldHaveLengthAtLeast)
 	ctx.Step(`^I wait for the evaluation job status to be "([^"]*)"$`, tc.iWaitForEvaluationJobStatus)
 	ctx.Step(`^I set the wait deadline to "([^"]*)"$`, tc.iSetWaitDeadlineTo)
+	ctx.Step(`^I set the wait interval to "([^"]*)"$`, tc.iSetWaitIntervalTo)
 	// Other steps
 	ctx.Step(`^fix this step$`, tc.fixThisStep)
 
