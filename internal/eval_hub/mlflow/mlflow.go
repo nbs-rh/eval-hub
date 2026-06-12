@@ -21,6 +21,25 @@ import (
 
 const workspaceProbeTimeout = 5 * time.Second
 
+func SetupMLFlowClient(config *config.Config, logger *slog.Logger) (*mlflowclient.Client, string, string, error) {
+	mlflowClient, err := NewMLFlowClient(config, logger)
+	if err != nil {
+		return nil, "", "", err
+	}
+	if mlflowClient == nil {
+		// this is the case when no tracking URI is set
+		return nil, "", "", nil
+	}
+	serverVersion, err := mlflowClient.GetVersion()
+	if err != nil {
+		// for now a failure to get the mlflow server version will not stop the server startup
+		// because maybe the port is not yet ready or the server is not yet running
+		logger.Warn("Failed to get MLFlow server version", "error", err.Error())
+	}
+	// if we get here then we have a valid tracking URI
+	return mlflowClient, config.MLFlow.TrackingURI, serverVersion, nil
+}
+
 func NewMLFlowClient(config *config.Config, logger *slog.Logger) (*mlflowclient.Client, error) {
 	url := ""
 	if config.MLFlow != nil && config.MLFlow.TrackingURI != "" {
@@ -83,16 +102,15 @@ func NewMLFlowClient(config *config.Config, logger *slog.Logger) (*mlflowclient.
 	//   2. Static token (WithToken) — for local development without a token file.
 	// At runtime, the token file takes precedence over the static token.
 	tokenPath := config.MLFlow.TokenPath
-	if tokenPath == "" {
-		tokenPath = "/var/run/secrets/kubernetes.io/serviceaccount/token"
-	}
 	// Always configure the token path; resolveAuthToken handles transient
 	// absence at request time (e.g. projected volume not yet mounted).
-	client = client.WithTokenPath(tokenPath)
-	logger.Info("MLflow auth token path configured (per-request reading)", "path", tokenPath)
+	if tokenPath != "" {
+		client = client.WithTokenPath(tokenPath)
+		logger.Info("MLflow auth token path configured (per-request reading)", "path", tokenPath)
+	}
 	if config.MLFlow.Token != "" {
 		client = client.WithToken(config.MLFlow.Token)
-		logger.Info("MLflow static auth token configured (fallback)")
+		logger.Info("MLflow static auth token configured")
 	}
 
 	if config.IsOTELEnabled() {
@@ -188,35 +206,17 @@ func GetOrCreateExperimentID(mlflowClient *mlflowclient.Client, jobConfig *api.E
 		return "", "", serviceerrors.NewServiceError(messages.MLFlowRequestFailed, "Error", err.Error())
 	}
 
-	mlflowExperiment, err := mlflowClient.GetExperimentByName(jobConfig.Experiment.Name)
-	if err != nil {
-		if !mlflowclient.IsResourceDoesNotExistError(err) {
-			// This is some other error than "resource does not exist" so report it as an error
-			return "", "", serviceerrors.NewServiceError(messages.MLFlowRequestFailed, "Error", err.Error())
-		}
-	}
-
-	if mlflowExperiment != nil && mlflowExperiment.Experiment.LifecycleStage == "active" && mlflowExperiment.Experiment.ExperimentID != "" {
-		mlflowClient.GetLogger().Info("Found active experiment", "experiment_name", jobConfig.Experiment.Name, "experiment_id", mlflowExperiment.Experiment.ExperimentID)
-		// we found an active experiment with the given name so return the ID
-		return mlflowExperiment.Experiment.ExperimentID, mlflowClient.GetExperimentsURL(), nil
-	}
-
-	// There is a possibility that the experiment was created between the get and the create
-	// but we do not consider this worth taking into account as it is very unlikely to happen.
-
-	// create a new experiment as we did not find an active experiment with the given name
 	tags := injectEvaluationJobTags(jobId, jobConfig)
 	req := mlflowclient.CreateExperimentRequest{
 		Name:             jobConfig.Experiment.Name,
 		ArtifactLocation: jobConfig.Experiment.ArtifactLocation,
 		Tags:             tags,
 	}
-	resp, err := mlflowClient.CreateExperiment(&req)
+	mlflowExperiment, err := mlflowClient.GetOrCreateExperiment(&req)
 	if err != nil {
 		return "", "", serviceerrors.NewServiceError(messages.MLFlowRequestFailed, "Error", err.Error())
 	}
 
-	mlflowClient.GetLogger().Info("Created new experiment", "experiment_name", jobConfig.Experiment.Name, "experiment_id", resp.ExperimentID)
-	return resp.ExperimentID, mlflowClient.GetExperimentsURL(), nil
+	mlflowClient.GetLogger().Info("Resolved experiment", "experiment_name", jobConfig.Experiment.Name, "experiment_id", mlflowExperiment.Experiment.ExperimentID)
+	return mlflowExperiment.Experiment.ExperimentID, mlflowClient.GetExperimentsURL(), nil
 }

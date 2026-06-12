@@ -103,7 +103,8 @@ func main() {
 	}
 	logger.Info("Runtime created", "runtime", runtime.Name())
 
-	mlflowClient, err := mlflow.NewMLFlowClient(serviceConfig, logger)
+	// setup mlflow client if there is a tracking URI set
+	mlflowClient, mlflowTrackingURI, mlflowServerVersion, err := mlflow.SetupMLFlowClient(serviceConfig, logger)
 	if err != nil {
 		startUpFailed(serviceConfig, err, "Failed to create MLFlow client", logger)
 	}
@@ -133,9 +134,20 @@ func main() {
 		startUpFailed(serviceConfig, err, "Failed to create API server", logger)
 	}
 
+	// Create the metrics server if Prometheus is enabled
+	var metricsSrv *server.MetricsServer
+	if serviceConfig.IsPrometheusEnabled() {
+		metricsSrv = server.NewMetricsServer(logger, serviceConfig.Prometheus)
+	}
+
 	// log the start up details
+	metricsPort := 0
+	if metricsSrv != nil {
+		metricsPort = metricsSrv.GetPort()
+	}
 	logger.Info("API Server starting",
 		"server_port", srv.GetPort(),
+		"metrics_port", metricsPort,
 		"version", serviceConfig.Service.Version,
 		"build", serviceConfig.Service.Build,
 		"build_date", serviceConfig.Service.BuildDate,
@@ -144,12 +156,23 @@ func main() {
 		"local", serviceConfig.Service.LocalMode,
 		"tls", serviceConfig.Service.TLSEnabled(),
 		"mlflow_tracking", mlflowClient != nil,
+		"mlflow_tracking_uri", mlflowTrackingURI,
+		"mlflow_server_version", mlflowServerVersion,
 		"otel", serviceConfig.IsOTELEnabled(),
 		"prometheus", serviceConfig.IsPrometheusEnabled(),
 	)
 
 	// Start config watcher to reload system providers and collections on file changes
 	watcherDone, watcherCancel := config.SetupWatcher(logger, validate, storage, args.ConfigDir)
+
+	// Start metrics server in a goroutine
+	if metricsSrv != nil {
+		go func() {
+			if err := metricsSrv.Start(); err != nil {
+				logger.Error("Metrics server failed", "error", err.Error())
+			}
+		}()
+	}
 
 	// Start server in a goroutine
 	go func() {
@@ -177,6 +200,13 @@ func main() {
 	waitForShutdown := 30 * time.Second
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), waitForShutdown)
 	defer cancel()
+
+	// shutdown the metrics server
+	if metricsSrv != nil {
+		if err := metricsSrv.Shutdown(shutdownCtx); err != nil {
+			logger.Error("Metrics server forced to shutdown", "error", err.Error())
+		}
+	}
 
 	// shutdown the storage
 	logger.Info("Shutting down API storage...")

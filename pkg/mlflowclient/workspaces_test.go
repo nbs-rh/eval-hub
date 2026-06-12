@@ -203,10 +203,16 @@ func TestEnsureWorkspace_edgeCases(t *testing.T) {
 
 	t.Run("create races with RESOURCE_ALREADY_EXISTS", func(t *testing.T) {
 		t.Parallel()
+		var getCalls int
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			switch {
 			case r.Method == http.MethodGet && r.URL.Path == "/api/3.0/mlflow/workspaces/race-ws":
-				http.Error(w, `{"error_code":"RESOURCE_DOES_NOT_EXIST"}`, http.StatusNotFound)
+				getCalls++
+				if getCalls == 1 {
+					http.Error(w, `{"error_code":"RESOURCE_DOES_NOT_EXIST"}`, http.StatusNotFound)
+					return
+				}
+				_ = json.NewEncoder(w).Encode(GetWorkspaceResponse{Workspace: Workspace{Name: "race-ws"}})
 			case r.Method == http.MethodPost && r.URL.Path == "/api/3.0/mlflow/workspaces":
 				http.Error(w, `{"error_code":"RESOURCE_ALREADY_EXISTS"}`, http.StatusBadRequest)
 			default:
@@ -218,6 +224,70 @@ func TestEnsureWorkspace_edgeCases(t *testing.T) {
 		client := NewClient(srv.URL).WithContext(t.Context()).WithWorkspacesSupport(true).WithWorkspace("race-ws")
 		if err := client.EnsureWorkspace(); err != nil {
 			t.Fatalf("EnsureWorkspace() = %v", err)
+		}
+		if getCalls != 2 {
+			t.Fatalf("getCalls = %d, want 2", getCalls)
+		}
+	})
+}
+
+func TestWorkspaceMgmtAPIsIncludeHeader(t *testing.T) {
+	t.Parallel()
+
+	t.Run("GetWorkspace sends header when workspaces enabled", func(t *testing.T) {
+		t.Parallel()
+		headerCh := make(chan string, 1)
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			headerCh <- r.Header.Get("X-MLFLOW-WORKSPACE")
+			_ = json.NewEncoder(w).Encode(GetWorkspaceResponse{Workspace: Workspace{Name: "my-ws"}})
+		}))
+		t.Cleanup(srv.Close)
+
+		client := NewClient(srv.URL).WithWorkspacesSupport(true).WithWorkspace("my-ws")
+		_, err := client.GetWorkspace("my-ws")
+		if err != nil {
+			t.Fatalf("GetWorkspace() = %v", err)
+		}
+		if got := <-headerCh; got != "my-ws" {
+			t.Fatalf("X-MLFLOW-WORKSPACE = %q, want %q", got, "my-ws")
+		}
+	})
+
+	t.Run("GetWorkspace omits header when workspaces disabled", func(t *testing.T) {
+		t.Parallel()
+		headerCh := make(chan string, 1)
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			headerCh <- r.Header.Get("X-MLFLOW-WORKSPACE")
+			_ = json.NewEncoder(w).Encode(GetWorkspaceResponse{Workspace: Workspace{Name: "my-ws"}})
+		}))
+		t.Cleanup(srv.Close)
+
+		client := NewClient(srv.URL).WithWorkspacesSupport(false)
+		_, err := client.GetWorkspace("my-ws")
+		if err != nil {
+			t.Fatalf("GetWorkspace() = %v", err)
+		}
+		if got := <-headerCh; got != "" {
+			t.Fatalf("X-MLFLOW-WORKSPACE = %q, want empty", got)
+		}
+	})
+
+	t.Run("CreateWorkspace omits header even when workspaces enabled", func(t *testing.T) {
+		t.Parallel()
+		headerCh := make(chan string, 1)
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			headerCh <- r.Header.Get("X-MLFLOW-WORKSPACE")
+			_ = json.NewEncoder(w).Encode(GetWorkspaceResponse{Workspace: Workspace{Name: "new-ws"}})
+		}))
+		t.Cleanup(srv.Close)
+
+		client := NewClient(srv.URL).WithWorkspacesSupport(true).WithWorkspace("my-ws")
+		_, err := client.CreateWorkspace(&CreateWorkspaceRequest{Name: "new-ws"})
+		if err != nil {
+			t.Fatalf("CreateWorkspace() = %v", err)
+		}
+		if got := <-headerCh; got != "" {
+			t.Fatalf("X-MLFLOW-WORKSPACE = %q, want empty", got)
 		}
 	})
 }

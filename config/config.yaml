@@ -32,6 +32,8 @@ env_mappings:
   EVALHUB_TOKEN_CACHE_TIMEOUT: sidecar.eval_hub.token_cache_timeout
   MLFLOW_TOKEN_CACHE_TIMEOUT: sidecar.mlflow.token_cache_timeout
   SIDECAR_PORT: sidecar.port
+  METRICS_PORT: prometheus.port
+  METRICS_HOST: prometheus.host
 
 # Database configuration
 database:
@@ -39,9 +41,12 @@ database:
   url: file::eval_hub:?mode=memory&cache=shared
   # driver: pgx
   # url: postgres://user@localhost:5432/eval_hub
-# MLFlow configuration
+
+# MLFlow configuration - enable by setting the tracking_uri
 mlflow:
   # tracking_uri: http://localhost:5000
+  # token_path: /var/run/secrets/kubernetes.io/serviceaccount/token
+
 # This is an example of how to enable instrumentation in a cluster
 otel:
   enabled: false
@@ -54,6 +59,8 @@ otel:
   # enable_logs: true
 prometheus:
   enabled: true
+  port: 9090
+  host: "0.0.0.0"
 
 sidecar:
   base_url: http://localhost:8080  # URL for adapter/runtime to call sidecar proxy (cluster mode)

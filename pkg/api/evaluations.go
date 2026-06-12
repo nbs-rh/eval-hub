@@ -100,15 +100,25 @@ type TestDataRef struct {
 	S3 *S3TestDataRef `mapstructure:"s3" json:"s3,omitempty"`
 }
 
+type HardwareProfileRef struct {
+	Name      string `mapstructure:"name" json:"name" validate:"required,rfc1123_dns_label"`
+	Namespace string `mapstructure:"namespace" json:"namespace,omitempty" validate:"omitempty,rfc1123_dns_label"`
+}
+
+type BenchmarkHardwareConfig struct {
+	HardwareProfileRef HardwareProfileRef `mapstructure:"hardware_profile_ref" json:"hardware_profile_ref,omitempty"`
+}
+
 // EvaluationBenchmarkConfig represents a benchmark reference in an evaluation job request or persisted job config.
 type EvaluationBenchmarkConfig struct {
-	Ref          `mapstructure:",squash"`
-	ProviderID   string         `mapstructure:"provider_id" json:"provider_id" validate:"required"`
-	Weight       float32        `mapstructure:"weight" json:"weight,omitempty" validate:"omitempty,min=0"`
-	PrimaryScore *PrimaryScore  `mapstructure:"primary_score" json:"primary_score,omitempty"`
-	PassCriteria *PassCriteria  `mapstructure:"pass_criteria" json:"pass_criteria,omitempty"`
-	Parameters   map[string]any `mapstructure:"parameters" json:"parameters,omitempty"`
-	TestDataRef  *TestDataRef   `mapstructure:"test_data_ref" json:"test_data_ref,omitempty"`
+	Ref            `mapstructure:",squash"`
+	ProviderID     string                   `mapstructure:"provider_id" json:"provider_id" validate:"required"`
+	Weight         float32                  `mapstructure:"weight" json:"weight,omitempty" validate:"omitempty,min=0"`
+	PrimaryScore   *PrimaryScore            `mapstructure:"primary_score" json:"primary_score,omitempty"`
+	PassCriteria   *PassCriteria            `mapstructure:"pass_criteria" json:"pass_criteria,omitempty"`
+	HardwareConfig *BenchmarkHardwareConfig `mapstructure:"hardware_config" json:"hardware_config,omitempty"`
+	Parameters     map[string]any           `mapstructure:"parameters" json:"parameters,omitempty"`
+	TestDataRef    *TestDataRef             `mapstructure:"test_data_ref" json:"test_data_ref,omitempty"`
 }
 
 // ExperimentTag represents a tag on an experiment
@@ -228,7 +238,7 @@ type CollectionRef struct {
 // When Kind is empty, the evaluation job API handler normalizes it to "kueue" before persist/runtime.
 type QueueConfig struct {
 	Kind string `json:"kind,omitempty" validate:"omitempty,oneof=kueue"`
-	Name string `json:"name" validate:"required,k8s_label_value"`
+	Name string `json:"name" validate:"required,rfc1123_dns_label"`
 }
 
 // EvaluationJobConfig represents evaluation job request schema

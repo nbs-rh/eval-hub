@@ -2182,6 +2182,36 @@ components:
           description: Threshold value.
       required:
         - threshold
+    HardwareProfileRef:
+      type: object
+      title: HardwareProfileRef
+      description: Reference to an OpenDataHub HardwareProfile custom resource.
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+          description: |
+            Name of the `HardwareProfile` custom resource (`hardwareprofiles.infrastructure.opendatahub.io`). Must conform to RFC 1123 DNS label naming (lowercase letters, digits, and internal hyphens).
+          examples:
+            - default-profile
+            - gpu-profile-v1
+        namespace:
+          type: string
+          pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+          description: |
+            Namespace of the `HardwareProfile` custom resource. When omitted, the server defaults to the evaluation job tenant namespace (from the `X-Tenant` request header in cluster mode).
+          examples:
+            - my-tenant-namespace
+    BenchmarkHardwareConfig:
+      type: object
+      title: BenchmarkHardwareConfig
+      description: |
+        Optional per-benchmark hardware override for Kubernetes runtimes. When `hardware_profile_ref` is set, the server fetches the named OpenDataHub `HardwareProfile` custom resource and applies its CPU, memory, and GPU resource values to the evaluation Job adapter container. Values missing from the profile fall back to the provider `runtime.k8s` configuration (and built-in defaults when those are unset).
+      properties:
+        hardware_profile_ref:
+          $ref: '#/components/schemas/HardwareProfileRef'
     TestDataRefS3:
       type: object
       description: |
@@ -2268,6 +2298,11 @@ components:
               $ref: '#/components/schemas/PrimaryScore'
             pass_criteria:
               $ref: '#/components/schemas/PassCriteria'
+            hardware_config:
+              $ref: '#/components/schemas/BenchmarkHardwareConfig'
+              description: |
+                Optional hardware profile override for this benchmark. Kubernetes runtimes
+                only; ignored by local runtimes.
             parameters:
               type: object
               additionalProperties: true
@@ -2405,8 +2440,9 @@ components:
             Queue integration to use. When omitted, the server behaves as if `kueue` was set. Only `kueue` is supported today.
         name:
           type: string
+          pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
           description: |
-            Queue resource name (for Kueue, the LocalQueue name). Set on the Job as label `kueue.x-k8s.io/queue-name`.
+            Queue resource name (for Kueue, the LocalQueue name). Must conform to RFC 1123 DNS label naming (lowercase letters, digits, and internal hyphens). Set on the Job as label `kueue.x-k8s.io/queue-name`.
     EvaluationJobConfigCommon2:
       type: object
       title: EvaluationJobConfigCommon2

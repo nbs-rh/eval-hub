@@ -29,7 +29,7 @@ type ServerInfoResponse struct {
 // Returns false for older servers that do not expose server-info (404).
 func (c *Client) ProbeWorkspacesEnabled() (bool, error) {
 	if c == nil {
-		return false, fmt.Errorf("mlflow client is nil")
+		return false, fmt.Errorf("mlflow client does not exist")
 	}
 	if c.ctx == nil {
 		return false, fmt.Errorf("context is nil for MLflow server-info request")
@@ -78,14 +78,14 @@ func (c *Client) WorkspacesEnabled() bool {
 // GetWorkspace returns the named workspace, or an error if it does not exist.
 func (c *Client) GetWorkspace(name string) (*Workspace, error) {
 	if c == nil {
-		return nil, fmt.Errorf("mlflow client is nil")
+		return nil, fmt.Errorf("mlflow client does not exist")
 	}
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return nil, fmt.Errorf("workspace name is empty")
 	}
 
-	respBody, err := c.doRequestWithoutWorkspace(http.MethodGet, workspaceEndpoint(name), nil)
+	respBody, err := c.doRequest(http.MethodGet, workspaceEndpoint(name), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -97,10 +97,10 @@ func (c *Client) GetWorkspace(name string) (*Workspace, error) {
 	return &resp.Workspace, nil
 }
 
-// CreateWorkspace creates a workspace. Workspace management APIs do not use X-MLFLOW-WORKSPACE.
+// CreateWorkspace creates a workspace without the X-MLFLOW-WORKSPACE header (global operation).
 func (c *Client) CreateWorkspace(req *CreateWorkspaceRequest) (*Workspace, error) {
 	if c == nil {
-		return nil, fmt.Errorf("mlflow client is nil")
+		return nil, fmt.Errorf("mlflow client does not exist")
 	}
 	if req == nil || strings.TrimSpace(req.Name) == "" {
 		return nil, fmt.Errorf("create workspace request is nil or missing name")
@@ -146,7 +146,8 @@ func (c *Client) EnsureWorkspace() error {
 		return nil
 	}
 	if IsResourceAlreadyExistsError(err) {
-		return nil
+		_, getErr := c.GetWorkspace(name)
+		return getErr
 	}
 	return err
 }

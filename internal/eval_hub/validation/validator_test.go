@@ -169,6 +169,9 @@ func TestQueueConfig_InvalidNameRejected(t *testing.T) {
 		"has spaces",
 		".starts-with-dot",
 		"ends-with-dot.",
+		"Uppercase-Queue",
+		"my_queue",
+		"queue.name",
 	}
 	for _, name := range invalid {
 		cfg := api.EvaluationJobConfig{
@@ -191,9 +194,8 @@ func TestQueueConfig_ValidNameAccepted(t *testing.T) {
 	valid := []string{
 		"my-queue",
 		"queue1",
-		"A",
-		"my_queue.v2",
-		"Queue-Name.1_2",
+		"a",
+		"gpu-profile-v1",
 	}
 	for _, name := range valid {
 		cfg := api.EvaluationJobConfig{
@@ -208,6 +210,96 @@ func TestQueueConfig_ValidNameAccepted(t *testing.T) {
 		if err != nil {
 			t.Errorf("expected no error for queue name %q, got: %v", name, err)
 		}
+	}
+}
+
+func TestBenchmarkHardwareConfig_InvalidNameRejected(t *testing.T) {
+	validate := NewValidator()
+	invalid := []string{
+		"profile!@#$%",
+		"-starts-with-dash",
+		"ends-with-dash-",
+		"has spaces",
+		".starts-with-dot",
+		"GPU-Profile",
+		"cpu_profile",
+		"gpu.profile.v1",
+	}
+	for _, name := range invalid {
+		cfg := api.EvaluationJobConfig{
+			Name:  "test-job",
+			Model: api.ModelRef{URL: "http://test.com", Name: "model"},
+			Benchmarks: []api.EvaluationBenchmarkConfig{
+				{
+					Ref:        api.Ref{ID: "b1"},
+					ProviderID: "provider-1",
+					HardwareConfig: &api.BenchmarkHardwareConfig{
+						HardwareProfileRef: api.HardwareProfileRef{Name: name},
+					},
+				},
+			},
+		}
+		err := validate.Struct(cfg)
+		if err == nil {
+			t.Errorf("expected validation error for hardware profile ref %q", name)
+		}
+	}
+}
+
+func TestBenchmarkHardwareConfig_ValidNameAccepted(t *testing.T) {
+	validate := NewValidator()
+	valid := []struct {
+		name      string
+		namespace string
+	}{
+		{name: "default-profile"},
+		{name: "gpu-profile-v1", namespace: "opendatahub"},
+		{name: "a"},
+	}
+	for _, tc := range valid {
+		cfg := api.EvaluationJobConfig{
+			Name:  "test-job",
+			Model: api.ModelRef{URL: "http://test.com", Name: "model"},
+			Benchmarks: []api.EvaluationBenchmarkConfig{
+				{
+					Ref:        api.Ref{ID: "b1"},
+					ProviderID: "provider-1",
+					HardwareConfig: &api.BenchmarkHardwareConfig{
+						HardwareProfileRef: api.HardwareProfileRef{
+							Name:      tc.name,
+							Namespace: tc.namespace,
+						},
+					},
+				},
+			},
+		}
+		err := validate.Struct(cfg)
+		if err != nil {
+			t.Errorf("expected no error for hardware profile ref %#v, got: %v", tc, err)
+		}
+	}
+}
+
+func TestBenchmarkHardwareConfig_InvalidNamespaceRejected(t *testing.T) {
+	validate := NewValidator()
+	cfg := api.EvaluationJobConfig{
+		Name:  "test-job",
+		Model: api.ModelRef{URL: "http://test.com", Name: "model"},
+		Benchmarks: []api.EvaluationBenchmarkConfig{
+			{
+				Ref:        api.Ref{ID: "b1"},
+				ProviderID: "provider-1",
+				HardwareConfig: &api.BenchmarkHardwareConfig{
+					HardwareProfileRef: api.HardwareProfileRef{
+						Name:      "valid-profile",
+						Namespace: "invalid namespace",
+					},
+				},
+			},
+		},
+	}
+	if err := validate.Struct(cfg); err == nil {
+		t.Fatal("expected validation error for invalid hardware profile namespace")
 	}
 }
 
