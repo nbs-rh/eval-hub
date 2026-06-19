@@ -105,7 +105,7 @@ Feature: Evaluation Jobs
 
   Scenario: Evaluation job with multiple benchmarks from same provider
     Given the service is running
-    When I send a POST request to "/api/v1/evaluations/jobs" with body "file:/evaluation_job_multiple_benchmark.json"
+    When I send a POST request to "/api/v1/evaluations/jobs" with body "file:/evaluation_job_multiple_benchmark.jsonnet"
     Then the response code should be 202
     And the response should contain the value "pending" at path "$.status.state"
     And the response should contain the value "evaluation_job_created" at path "$.status.message.message_code"
@@ -123,7 +123,7 @@ Feature: Evaluation Jobs
     And the response should contain the value "arc_easy" at path "$.benchmarks[0].id"
     And the response should contain the value "5" at path "$.benchmarks[0].parameters.num_examples"
     And the response should contain the value "arc_easy" at path "$.benchmarks[1].id"
-    And the response should contain the value "10" at path "$.benchmarks[1].parameters.num_examples"
+    And the response should contain the value "5" at path "$.benchmarks[1].parameters.num_examples"
     And the response should not contain the value "collection" at path "$.collection"
     When I send a DELETE request to "/api/v1/evaluations/jobs/{id}?hard_delete=true"
     Then the response code should be 204
@@ -292,41 +292,11 @@ Feature: Evaluation Jobs
     When I send a POST request to "/api/v1/evaluations/collections" with body "file:/collection.json"
     Then the response code should be 201
     And the "resource.id" field in the response should be saved as "value:collection_id"
-    When I send a POST request to "/api/v1/evaluations/jobs" with body:
-      """
-      {
-        "name": "automation_shared_experiment_with_collections_job_1",
-        "model": {
-          "url": "{{env:MODEL_URL|http://test.com}}",
-          "name": "{{env:MODEL_NAME|test}}"
-        },
-        "collection": {
-          "id": "{{value:collection_id}}"
-        },
-        "experiment": {
-          "name": "automation_shared_experiment"
-        }
-      }
-      """
+    When I send a POST request to "/api/v1/evaluations/jobs" with body "file:/evaluation_job_mlflow_collection_shared_job1.jsonnet"
     Then the response code should be 202
     And the "resource.mlflow_experiment_id" field in the response should be saved as "value:exp_id"
     And the "resource.id" field in the response should be saved as "value:exp_job1_id"
-    When I send a POST request to "/api/v1/evaluations/jobs" with body:
-      """
-      {
-        "name": "automation_shared_experiment_with_collections_job_2",
-        "model": {
-          "url": "{{env:MODEL_URL|http://test.com}}",
-          "name": "{{env:MODEL_NAME|test}}"
-        },
-        "collection": {
-          "id": "{{value:collection_id}}"
-        },
-        "experiment": {
-          "name": "automation_shared_experiment"
-        }
-      }
-      """
+    When I send a POST request to "/api/v1/evaluations/jobs" with body "file:/evaluation_job_mlflow_collection_shared_job2.jsonnet"
     Then the response code should be 202
     And the response should contain the value "{{value:exp_id}}" at path "$.resource.mlflow_experiment_id"
     And the "resource.id" field in the response should be saved as "value:exp_job2_id"
@@ -424,45 +394,7 @@ Feature: Evaluation Jobs
  # This test uses gated HuggingFace datasets (toxigen, truthfulqa_mc1, bigbench_hhh_alignment_multiple_choice) which require authentication.
   Scenario: Verify Evaluation Jobs Can Use OOB Collections - toxicity-and-ethical-principles
     Given the service is running
-    When I send a POST request to "/api/v1/evaluations/jobs" with body:
-      """
-      {
-        "name": "test-evaluation-job-oob-collection",
-        "collection": {
-          "id": "toxicity-and-ethical-principles",
-          "benchmarks": [
-            {
-              "id": "toxigen",
-              "provider_id": "lm_evaluation_harness",
-              "parameters": {
-                "limit": 5
-              }
-            },
-            {
-              "id": "truthfulqa_mc1",
-              "provider_id": "lm_evaluation_harness",
-              "parameters": {
-                "limit": 3
-              }
-            },
-            {
-              "id": "bigbench_hhh_alignment_multiple_choice",
-              "provider_id": "lm_evaluation_harness",
-              "parameters": {
-                "limit": 1
-              }
-            }
-          ]
-        },
-        "model": {
-          "url": "{{env:MODEL_URL|http://test.com}}",
-          "name": "{{env:MODEL_NAME|test}}",
-          "auth": {
-            "secret_ref": "{{env:MODEL_AUTH_SECRET_REF|test}}"
-          }
-        }
-      }
-      """
+    When I send a POST request to "/api/v1/evaluations/jobs" with body "file:/evaluation_job_oob_toxicity.jsonnet"
     Then the response code should be 202
     And the response should contain the value "toxicity-and-ethical-principles" at path "$.collection.id"
     And I wait for the evaluation job status to be "completed"
@@ -477,9 +409,9 @@ Feature: Evaluation Jobs
     And the response should contain the value "toxigen" at path "$.results.benchmarks[*].id"
     And the response should contain the value "truthfulqa_mc1" at path "$.results.benchmarks[*].id"
     And the response should contain the value "bigbench_hhh_alignment_multiple_choice" at path "$.results.benchmarks[*].id"
-    And the response should equal the value "5" at path "$.collection.benchmarks[0].parameters.limit"
-    And the response should equal the value "3" at path "$.collection.benchmarks[1].parameters.limit"
-    And the response should equal the value "1" at path "$.collection.benchmarks[2].parameters.limit"
+    And the response should equal the value "5" at path "$.collection.benchmarks[0].parameters.num_examples"
+    And the response should equal the value "5" at path "$.collection.benchmarks[1].parameters.num_examples"
+    And the response should equal the value "5" at path "$.collection.benchmarks[2].parameters.num_examples"
     And the response should contain "results"
     # TODO: Add specific metric validations once we verify actual response structure
 
@@ -689,113 +621,29 @@ Feature: Evaluation Jobs
 
   Scenario: Multiple jobs can reference different OOB collection
     Given the service is running
-    When I send a POST request to "/api/v1/evaluations/jobs" with body:
-      """
-      {
-        "name": "multiple-job-different-collection-1",
-        "model": {
-          "url": "{{env:MODEL_URL|http://test.com}}",
-          "name": "{{env:MODEL_NAME|test}}"
-        },
-        "collection": {
-          "id": "safety-and-fairness-v1"
-        }
-      }
-      """
+    When I send a POST request to "/api/v1/evaluations/jobs" with body "file:/evaluation_job_oob_ref_safety_fairness_job1.jsonnet"
     Then the response code should be 202
     And the response should contain the value "safety-and-fairness-v1" at path "$.collection.id"
-    When I send a POST request to "/api/v1/evaluations/jobs" with body:
-      """
-      {
-        "name": "multiple-job-different-collection-2",
-        "model": {
-          "url": "{{env:MODEL_URL|http://test.com}}",
-          "name": "{{env:MODEL_NAME|test}}"
-        },
-        "collection": {
-          "id": "toxicity-and-ethical-principles"
-        }
-      }
-      """
+    When I send a POST request to "/api/v1/evaluations/jobs" with body "file:/evaluation_job_oob_ref_toxicity_job2.jsonnet"
     Then the response code should be 202
     And the response should contain the value "toxicity-and-ethical-principles" at path "$.collection.id"
-    When I send a POST request to "/api/v1/evaluations/jobs" with body:
-      """
-      {
-        "name": "multiple-job-different-collection-3",
-        "model": {
-          "url": "{{env:MODEL_URL|http://test.com}}",
-          "name": "{{env:MODEL_NAME|test}}"
-        },
-        "collection": {
-          "id": "leaderboard-v2"
-        }
-      }
-      """
+    When I send a POST request to "/api/v1/evaluations/jobs" with body "file:/evaluation_job_oob_ref_leaderboard_job3.jsonnet"
     Then the response code should be 202
     And the response should contain the value "leaderboard-v2" at path "$.collection.id"
 
   Scenario: Multiple jobs can reference same OOB collection
     Given the service is running
-    When I send a POST request to "/api/v1/evaluations/jobs" with body:
-      """
-      {
-        "name": "multiple-job-same-collection-1",
-        "model": {
-          "url": "{{env:MODEL_URL|http://test.com}}",
-          "name": "{{env:MODEL_NAME|test}}"
-        },
-        "collection": {
-          "id": "safety-and-fairness-v1"
-        }
-      }
-      """
+    When I send a POST request to "/api/v1/evaluations/jobs" with body "file:/evaluation_job_oob_ref_safety_same1.jsonnet"
     Then the response code should be 202
     And the response should contain the value "safety-and-fairness-v1" at path "$.collection.id"
-    When I send a POST request to "/api/v1/evaluations/jobs" with body:
-      """
-      {
-        "name": "multiple-job-same-collection-2",
-        "model": {
-          "url": "{{env:MODEL_URL|http://test.com}}",
-          "name": "{{env:MODEL_NAME|test}}"
-        },
-        "collection": {
-          "id": "safety-and-fairness-v1"
-        }
-      }
-      """
+    When I send a POST request to "/api/v1/evaluations/jobs" with body "file:/evaluation_job_oob_ref_safety_same2.jsonnet"
     Then the response code should be 202
     And the response should contain the value "safety-and-fairness-v1" at path "$.collection.id"
 
   @mlflow
   Scenario: Create an evaluation job with MLflow experiment and OOB collection
     Given the service is running
-    When I send a POST request to "/api/v1/evaluations/jobs" with body:
-      """
-      {
-        "model": {
-          "url": "{{env:MODEL_URL|http://test.com}}",
-          "name": "{{env:MODEL_NAME|test}}"
-        },
-        "collection": {
-          "id": "leaderboard-v2"
-        },
-        "experiment": {
-          "name": "{{mlflow:oob-collection-experiment}}",
-          "tags": [
-            {
-              "key": "environment",
-              "value": "test"
-            }
-          ]
-        },
-        "name": "test-evaluation-job",
-        "tags": [
-          "environment"
-        ]
-      }
-      """
+    When I send a POST request to "/api/v1/evaluations/jobs" with body "file:/evaluation_job_mlflow_oob_leaderboard.jsonnet"
     Then the response code should be 202
     When I send a GET request to "/api/v1/evaluations/jobs/{id}"
     Then the response code should be 200
@@ -1158,49 +1006,7 @@ Feature: Evaluation Jobs
   # This scenario requires HuggingFace authentication for all 3 benchmarks to run
   Scenario: Create evaluation job with queue and collection
     Given the service is running
-    When I send a POST request to "/api/v1/evaluations/jobs" with body:
-      """
-      {
-        "name": "test-evaluation-job-queue-collection",
-        "queue": {
-          "kind": "kueue",
-          "name": "{{env:QUEUE_NAME|user-queue}}"
-        },
-        "collection": {
-          "id": "toxicity-and-ethical-principles",
-          "benchmarks": [
-            {
-              "id": "toxigen",
-              "provider_id": "lm_evaluation_harness",
-              "parameters": {
-                "limit": 4
-              }
-            },
-            {
-              "id": "truthfulqa_mc1",
-              "provider_id": "lm_evaluation_harness",
-              "parameters": {
-                "limit": 3
-              }
-            },
-            {
-              "id": "bigbench_hhh_alignment_multiple_choice",
-              "provider_id": "lm_evaluation_harness",
-              "parameters": {
-                "limit": 1
-              }
-            }
-          ]
-        },
-        "model": {
-          "url": "{{env:MODEL_URL|http://test.com}}",
-          "name": "{{env:MODEL_NAME|test}}",
-          "auth": {
-            "secret_ref": "{{env:MODEL_AUTH_SECRET_REF| }}"
-          }
-        }
-      }
-      """
+    When I send a POST request to "/api/v1/evaluations/jobs" with body "file:/evaluation_job_kueue_oob_toxicity.jsonnet"
     Then the response code should be 202
     And the response should contain the value "kueue" at path "$.queue.kind"
     And the response should contain the value "{{env:QUEUE_NAME|user-queue}}" at path "$.queue.name"
@@ -1373,10 +1179,9 @@ Feature: Evaluation Jobs
     And the response should contain the value "request_validation_failed" at path "$.message_code"
 
   @hardware_profile
-  Scenario: Create evaluation job with hardware profile applies adapter resources
+  Scenario: Create evaluation job with hardware profile persists reference in API response
     Given the service is running
-    And the HardwareProfile CRD is installed on the cluster
-    And a test HardwareProfile is created in the tenant namespace
+    And the test hardware profile is configured
     When I send a POST request to "/api/v1/evaluations/jobs" with body:
       """
       {
@@ -1398,7 +1203,7 @@ Feature: Evaluation Jobs
             },
             "hardware_config": {
               "hardware_profile_ref": {
-                "name": "{{value:hardware_profile_name}}"
+                "name": "{{env:TEST_HARDWARE_PROFILE}}"
               }
             }
           }
@@ -1407,24 +1212,23 @@ Feature: Evaluation Jobs
       """
     Then the response code should be 202
     And the response should contain the value "evaluation_job_created" at path "$.status.message.message_code"
-    And the response should contain the value "{{value:hardware_profile_name}}" at path "$.benchmarks[0].hardware_config.hardware_profile_ref.name"
+    And the response should contain the value "{{env:TEST_HARDWARE_PROFILE}}" at path "$.benchmarks[0].hardware_config.hardware_profile_ref.name"
     And I wait for the Kubernetes evaluation Job to be created
-    And the Job adapter container should have CPU request "1"
-    And the Job adapter container should have memory request "1Gi"
-    And the Job adapter container should have CPU limit "2"
-    And the Job adapter container should have memory limit "2Gi"
+    And the Job adapter container should have CPU request "{{env:TEST_HARDWARE_PROFILE_CPU_REQUEST}}"
+    And the Job adapter container should have memory request "{{env:TEST_HARDWARE_PROFILE_MEMORY_REQUEST}}"
+    And the Job adapter container should have CPU limit "{{env:TEST_HARDWARE_PROFILE_CPU_LIMIT}}"
+    And the Job adapter container should have memory limit "{{env:TEST_HARDWARE_PROFILE_MEMORY_LIMIT}}"
     When I send a GET request to "/api/v1/evaluations/jobs/{id}"
     Then the response code should be 200
-    And the response should contain the value "{{value:hardware_profile_name}}" at path "$.benchmarks[0].hardware_config.hardware_profile_ref.name"
+    And the response should contain the value "{{env:TEST_HARDWARE_PROFILE}}" at path "$.benchmarks[0].hardware_config.hardware_profile_ref.name"
     And the response should not contain the value "" at path "$.benchmarks[0].hardware_config.hardware_profile_ref.namespace"
     When I send a DELETE request to "/api/v1/evaluations/jobs/{id}?hard_delete=true"
     Then the response code should be 204
 
   @hardware_profile
-  Scenario: Create evaluation job with explicit hardware profile namespace
+  Scenario: Create evaluation job with explicit hardware profile namespace in API response
     Given the service is running
-    And the HardwareProfile CRD is installed on the cluster
-    And a test HardwareProfile is created in the tenant namespace
+    And the test hardware profile is configured
     When I send a POST request to "/api/v1/evaluations/jobs" with body:
       """
       {
@@ -1446,7 +1250,7 @@ Feature: Evaluation Jobs
             },
             "hardware_config": {
               "hardware_profile_ref": {
-                "name": "{{value:hardware_profile_name}}",
+                "name": "{{env:TEST_HARDWARE_PROFILE}}",
                 "namespace": "{{env:X_TENANT|test-tenant}}"
               }
             }
@@ -1455,10 +1259,11 @@ Feature: Evaluation Jobs
       }
       """
     Then the response code should be 202
+    And the response should contain the value "{{env:TEST_HARDWARE_PROFILE}}" at path "$.benchmarks[0].hardware_config.hardware_profile_ref.name"
     And the response should contain the value "{{env:X_TENANT|test-tenant}}" at path "$.benchmarks[0].hardware_config.hardware_profile_ref.namespace"
     And I wait for the Kubernetes evaluation Job to be created
-    And the Job adapter container should have CPU request "1"
-    And the Job adapter container should have memory request "1Gi"
+    And the Job adapter container should have CPU request "{{env:TEST_HARDWARE_PROFILE_CPU_REQUEST}}"
+    And the Job adapter container should have memory request "{{env:TEST_HARDWARE_PROFILE_MEMORY_REQUEST}}"
     When I send a DELETE request to "/api/v1/evaluations/jobs/{id}?hard_delete=true"
     Then the response code should be 204
 

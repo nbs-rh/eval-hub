@@ -237,6 +237,49 @@ test.model()
 	}
 }
 
+func TestJsonnetOobCollectionRefJobWithLimit(t *testing.T) {
+	tc := &scenarioConfig{values: map[string]string{}}
+	vm, err := tc.newJsonnetVM()
+	if err != nil {
+		t.Fatalf("newJsonnetVM: %v", err)
+	}
+	out, err := vm.EvaluateAnonymousSnippet("snippet.jsonnet", `
+local test = import 'test.libsonnet';
+test.oobCollectionRefJobWithLimit('job-a', 'toxicity-and-ethical-principles', test.toxicityAndEthicalPrinciplesBenchmarkIds())
+`)
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	var got map[string]interface{}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	coll, ok := got["collection"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("collection = %#v", got["collection"])
+	}
+	if coll["id"] != "toxicity-and-ethical-principles" {
+		t.Errorf("collection id = %v", coll["id"])
+	}
+	benchmarks, ok := coll["benchmarks"].([]interface{})
+	if !ok || len(benchmarks) != 3 {
+		t.Fatalf("benchmarks = %#v, want 3 entries", coll["benchmarks"])
+	}
+	for i, raw := range benchmarks {
+		b, ok := raw.(map[string]interface{})
+		if !ok {
+			t.Fatalf("benchmark[%d] = %#v", i, raw)
+		}
+		params, ok := b["parameters"].(map[string]interface{})
+		if !ok {
+			t.Fatalf("benchmark[%d].parameters = %#v", i, b["parameters"])
+		}
+		if lim, ok := params["num_examples"].(float64); !ok || int(lim) != 5 {
+			t.Errorf("benchmark[%d].parameters.num_examples = %v, want 5", i, params["num_examples"])
+		}
+	}
+}
+
 func TestJsonnetExperiment(t *testing.T) {
 	mlflowOff := false
 	tc := &scenarioConfig{
@@ -591,6 +634,68 @@ func TestEvaluateEvaluationJobJsonnetWithCollectionId(t *testing.T) {
 	}
 	if job.Benchmarks != nil {
 		t.Errorf("benchmarks = %#v, want key absent when collection_id is set", job.Benchmarks)
+	}
+}
+
+func TestEvaluateOobCollectionJobJsonnetDisconnectedAware(t *testing.T) {
+	connectedEnv := map[string]string{
+		"MODEL_URL":             "http://model.example/v1",
+		"MODEL_NAME":            "test-model",
+		"MODEL_AUTH_SECRET_REF": "secret",
+		"ENVIRONMENT_ID":        "connected",
+	}
+	disconnectedEnv := map[string]string{
+		"MODEL_URL":               "http://model.example/v1",
+		"MODEL_NAME":              "test-model",
+		"MODEL_AUTH_SECRET_REF":   "secret",
+		"ENVIRONMENT_ID":          "disconnected",
+		"TEST_DATA_S3_BUCKET":     "mlpipeline",
+		"TEST_DATA_S3_KEY":        "offline",
+		"TEST_DATA_S3_SECRET_REF": "minio-test",
+	}
+	cases := []struct {
+		file           string
+		wantCollection string
+		minBenchmarks  int
+	}{
+		{"evaluation_job_oob_toxicity.jsonnet", "toxicity-and-ethical-principles", 3},
+	}
+	for _, disconnected := range []bool{false, true} {
+		mode := "connected"
+		baseEnv := connectedEnv
+		if disconnected {
+			mode = "disconnected"
+			baseEnv = disconnectedEnv
+		}
+		for _, tc := range cases {
+			name := mode + "/" + tc.file
+			t.Run(name, func(t *testing.T) {
+				sc := &scenarioConfig{
+					values:            map[string]string{},
+					jsonnetHarnessEnv: baseEnv,
+				}
+				out, err := sc.evaluateJsonnetFile(jsonnetPayloadFilePath(t, tc.file))
+				if err != nil {
+					t.Fatalf("evaluateJsonnetFile(%s): %v", tc.file, err)
+				}
+				var job struct {
+					Collection struct {
+						ID         string                    `json:"id"`
+						Benchmarks []jsonnetBenchmarkPayload `json:"benchmarks"`
+					} `json:"collection"`
+				}
+				if err := json.Unmarshal([]byte(out), &job); err != nil {
+					t.Fatalf("unmarshal %s: %v\noutput: %s", tc.file, err, out)
+				}
+				if job.Collection.ID != tc.wantCollection {
+					t.Errorf("collection.id = %q, want %q", job.Collection.ID, tc.wantCollection)
+				}
+				if len(job.Collection.Benchmarks) < tc.minBenchmarks {
+					t.Fatalf("collection.benchmarks = %d, want at least %d", len(job.Collection.Benchmarks), tc.minBenchmarks)
+				}
+				assertJsonnetBenchmarksDisconnectedAware(t, tc.file, job.Collection.Benchmarks, disconnected)
+			})
+		}
 	}
 }
 

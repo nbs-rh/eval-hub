@@ -142,18 +142,18 @@ Main function (`cmd/eval_hub/main.go`) implements graceful shutdown:
 1. Creates logger and loads service, provider, and collection config
 2. Wires storage, validator, runtime, and MLflow client
 3. Creates server with `server.NewServer(logger, serviceConfig, storage, validate, runtime, mlflowClient)`
-4. If Prometheus is enabled, creates and starts a dedicated **MetricsServer** on port 9090 (configurable via `METRICS_PORT`)
+4. If Prometheus is enabled, creates and starts a dedicated **MetricsServer** on port 8081 (configurable via `METRICS_PORT`)
 5. Starts main API server in a goroutine
 6. Waits for SIGINT/SIGTERM
 7. Gracefully shuts down metrics server, then main server, with a bounded timeout
 
 #### Metrics server
 
-A separate `MetricsServer` (`internal/eval_hub/server/metrics_server.go`) serves `/metrics` on port 9090 bound to `0.0.0.0` over plain HTTP. This allows Prometheus to scrape metrics without going through kube-rbac-proxy auth. The main API server (bound to `127.0.0.1`) does not serve `/metrics` in cluster mode. In **local mode** (`--local`), `/metrics` is dual-served on both ports for FVT test compatibility.
+A separate `MetricsServer` (`internal/eval_hub/server/metrics_server.go`) serves `/metrics` on port 8081 bound to `0.0.0.0` over plain HTTP. This allows Prometheus to scrape metrics without going through kube-rbac-proxy auth. The main API server (bound to `127.0.0.1`) does not serve `/metrics` in cluster mode. In **local mode** (`--local`), `/metrics` is dual-served on both ports for FVT test compatibility.
 
 ### MCP Server
 
-The MCP (Model Context Protocol) server exposes eval-hub functionality to AI agents. Entry point: `cmd/evalhub_mcp/main.go`.
+The MCP (Model Context Protocol) server exposes eval-hub functionality to AI agents. Entry point: `cmd/evalhub_mcp/main.go`. **MCP.md** documents deployment, authentication, and the full capabilities reference (tools including `discover_providers`, resources, prompts, and completions).
 
 ```bash
 # Run directly
