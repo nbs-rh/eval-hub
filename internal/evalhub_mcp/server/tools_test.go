@@ -296,6 +296,158 @@ func TestSubmitEvaluationBothBenchmarksAndCollection(t *testing.T) {
 	}
 }
 
+func TestSubmitEvaluationParameters(t *testing.T) {
+	t.Parallel()
+
+	var captured api.EvaluationJobConfig
+	client := &mockToolClient{
+		createJobFn: func(config api.EvaluationJobConfig) (*api.EvaluationJobResource, error) {
+			captured = config
+			return &api.EvaluationJobResource{
+				Resource: api.EvaluationResource{
+					Resource: api.Resource{ID: "job-params"},
+				},
+				Status: &api.EvaluationJobStatus{
+					EvaluationJobState: api.EvaluationJobState{State: api.OverallStatePending},
+				},
+				EvaluationJobConfig: config,
+			}, nil
+		},
+	}
+
+	ctx, cs := connectWithTools(t, client)
+
+	callToolJSON[SubmitEvaluationOutput](t, ctx, cs, "submit_evaluation", map[string]any{
+		"name": "params-eval",
+		"model": map[string]any{
+			"url":  "http://model:8080",
+			"name": "test-model",
+			"parameters": map[string]any{
+				"temperature": 0.7,
+				"max_tokens":  1024,
+			},
+		},
+		"benchmarks": []map[string]any{
+			{
+				"id":          "mmlu",
+				"provider_id": "unitxt",
+				"parameters": map[string]any{
+					"num_fewshot": 5,
+				},
+				"weight": 2.5,
+			},
+		},
+	})
+
+	if captured.Model.Parameters == nil {
+		t.Fatal("expected model parameters to be passed through")
+	}
+	if captured.Model.Parameters["temperature"] != 0.7 {
+		t.Errorf("model temperature = %v, want 0.7", captured.Model.Parameters["temperature"])
+	}
+	if captured.Model.Parameters["max_tokens"] != float64(1024) {
+		t.Errorf("model max_tokens = %v, want 1024", captured.Model.Parameters["max_tokens"])
+	}
+	if len(captured.Benchmarks) != 1 {
+		t.Fatalf("expected 1 benchmark, got %d", len(captured.Benchmarks))
+	}
+	if captured.Benchmarks[0].Parameters == nil {
+		t.Fatal("expected benchmark parameters to be passed through")
+	}
+	if captured.Benchmarks[0].Parameters["num_fewshot"] != float64(5) {
+		t.Errorf("benchmark num_fewshot = %v, want 5", captured.Benchmarks[0].Parameters["num_fewshot"])
+	}
+	if captured.Benchmarks[0].Weight != 2.5 {
+		t.Errorf("benchmark weight = %v, want 2.5", captured.Benchmarks[0].Weight)
+	}
+}
+
+func TestSubmitEvaluationModelAuth(t *testing.T) {
+	t.Parallel()
+
+	var captured api.EvaluationJobConfig
+	client := &mockToolClient{
+		createJobFn: func(config api.EvaluationJobConfig) (*api.EvaluationJobResource, error) {
+			captured = config
+			return &api.EvaluationJobResource{
+				Resource: api.EvaluationResource{
+					Resource: api.Resource{ID: "job-auth"},
+				},
+				Status: &api.EvaluationJobStatus{
+					EvaluationJobState: api.EvaluationJobState{State: api.OverallStatePending},
+				},
+				EvaluationJobConfig: config,
+			}, nil
+		},
+	}
+
+	ctx, cs := connectWithTools(t, client)
+
+	callToolJSON[SubmitEvaluationOutput](t, ctx, cs, "submit_evaluation", map[string]any{
+		"name": "auth-eval",
+		"model": map[string]any{
+			"url":  "http://model:8080",
+			"name": "test-model",
+			"auth": map[string]any{
+				"secret_ref": "model-auth-secret",
+			},
+		},
+		"benchmarks": []map[string]any{
+			{"id": "mmlu", "provider_id": "unitxt"},
+		},
+	})
+
+	if captured.Model.Auth == nil || captured.Model.Auth.SecretRef != "model-auth-secret" {
+		t.Errorf("auth = %#v, want secret_ref model-auth-secret", captured.Model.Auth)
+	}
+}
+
+func TestSubmitEvaluationWithoutParameters(t *testing.T) {
+	t.Parallel()
+
+	var captured api.EvaluationJobConfig
+	client := &mockToolClient{
+		createJobFn: func(config api.EvaluationJobConfig) (*api.EvaluationJobResource, error) {
+			captured = config
+			return &api.EvaluationJobResource{
+				Resource: api.EvaluationResource{
+					Resource: api.Resource{ID: "job-no-params"},
+				},
+				Status: &api.EvaluationJobStatus{
+					EvaluationJobState: api.EvaluationJobState{State: api.OverallStatePending},
+				},
+				EvaluationJobConfig: config,
+			}, nil
+		},
+	}
+
+	ctx, cs := connectWithTools(t, client)
+
+	out := callToolJSON[SubmitEvaluationOutput](t, ctx, cs, "submit_evaluation", map[string]any{
+		"name": "no-params-eval",
+		"model": map[string]any{
+			"url":  "http://model:8080",
+			"name": "test-model",
+		},
+		"benchmarks": []map[string]any{
+			{"id": "mmlu", "provider_id": "unitxt"},
+		},
+	})
+
+	if out.JobID != "job-no-params" {
+		t.Errorf("job_id = %q, want %q", out.JobID, "job-no-params")
+	}
+	if len(captured.Model.Parameters) > 0 {
+		t.Errorf("model parameters = %v, want nil or empty", captured.Model.Parameters)
+	}
+	if len(captured.Benchmarks) != 1 {
+		t.Fatalf("expected 1 benchmark, got %d", len(captured.Benchmarks))
+	}
+	if len(captured.Benchmarks[0].Parameters) > 0 {
+		t.Errorf("benchmark parameters = %v, want nil or empty", captured.Benchmarks[0].Parameters)
+	}
+}
+
 func TestSubmitEvaluationExperimentConfig(t *testing.T) {
 	t.Parallel()
 

@@ -89,10 +89,16 @@ func (r *K8sRuntime) RunEvaluationJob(
 	return nil
 }
 
+// jobForegroundDeleteOptions deletes Job-owned Pods before removing the Job so stuck Init
+// pods cannot outlive a background Job delete during hard_delete or orphan cleanup.
+func jobForegroundDeleteOptions() metav1.DeleteOptions {
+	propagationPolicy := metav1.DeletePropagationForeground
+	return metav1.DeleteOptions{PropagationPolicy: &propagationPolicy}
+}
+
 func (r *K8sRuntime) DeleteEvaluationJobResources(evaluation *api.EvaluationJobResource) error {
 	namespace := resolveNamespace(string(evaluation.Resource.Tenant))
-	propagationPolicy := metav1.DeletePropagationBackground
-	deleteOptions := metav1.DeleteOptions{PropagationPolicy: &propagationPolicy}
+	deleteOptions := jobForegroundDeleteOptions()
 
 	r.logger.Info(
 		"deleting evaluation runtime resources",
@@ -324,7 +330,7 @@ func (r *K8sRuntime) createBenchmarkResources(ctx context.Context,
 			// missing ConfigMap — delete it now to prevent an orphaned, permanently-stuck job.
 			logger.Warn("configmap deleted mid-creation (race with hard_delete) — cleaning up orphaned job",
 				"namespace", createdJob.Namespace, "job", createdJob.Name, "configmap", configMap.Name)
-			if delErr := r.helper.DeleteJob(ctx, createdJob.Namespace, createdJob.Name, metav1.DeleteOptions{}); delErr != nil && !apierrors.IsNotFound(delErr) {
+			if delErr := r.helper.DeleteJob(ctx, createdJob.Namespace, createdJob.Name, jobForegroundDeleteOptions()); delErr != nil && !apierrors.IsNotFound(delErr) {
 				logger.Error("failed to delete orphaned job", "namespace", createdJob.Namespace, "name", createdJob.Name, "error", delErr)
 				return delErr
 			}
