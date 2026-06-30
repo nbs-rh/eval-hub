@@ -1,35 +1,105 @@
 package metrics
 
 import (
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
+	"context"
+
+	"github.com/eval-hub/eval-hub/pkg/api"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 )
+
+const instrumentationScope = "github.com/eval-hub/eval-hub/internal/eval_hub/metrics"
 
 var (
-	// HTTPRequestDuration tracks the duration of HTTP requests in seconds
-	HTTPRequestDuration = promauto.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Name:    "http_request_duration_seconds",
-			Help:    "Duration of HTTP requests in seconds",
-			Buckets: prometheus.DefBuckets,
-		},
-		[]string{"method", "endpoint", "status"},
-	)
-
-	// HTTPRequestTotal tracks the total number of HTTP requests
-	HTTPRequestTotal = promauto.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "http_requests_total",
-			Help: "Total number of HTTP requests",
-		},
-		[]string{"method", "endpoint", "status"},
-	)
-
-	// HTTPRequestInFlight tracks the number of in-flight HTTP requests
-	HTTPRequestInFlight = promauto.NewGauge(
-		prometheus.GaugeOpts{
-			Name: "http_requests_in_flight",
-			Help: "Number of HTTP requests currently being processed",
-		},
-	)
+	evaluationJobsTotal         metric.Int64Counter
+	evaluationJobCompletions    metric.Int64Counter
+	benchmarkRuntimeErrorsTotal metric.Int64Counter
 )
+
+// Init creates OTEL evaluation job instruments. Call once after otel.SetupOTEL configures the global MeterProvider.
+func Init() error {
+	meter := otel.Meter(instrumentationScope)
+
+	var err error
+	evaluationJobsTotal, err = meter.Int64Counter(
+		"evalhub.evaluation_jobs",
+		metric.WithDescription("Evaluation job lifecycle events"),
+	)
+	if err != nil {
+		return err
+	}
+
+	evaluationJobCompletions, err = meter.Int64Counter(
+		"evalhub.evaluation_job_completions",
+		metric.WithDescription("Evaluation jobs reaching a terminal state"),
+	)
+	if err != nil {
+		return err
+	}
+
+	benchmarkRuntimeErrorsTotal, err = meter.Int64Counter(
+		"evalhub.benchmark_runtime_errors",
+		metric.WithDescription("Benchmark scheduling or start errors by runtime"),
+	)
+	if err != nil {
+		return err
+	}
+
+	return initHTTPMetrics(meter)
+}
+
+// RecordEvaluationJobCreated increments the counter when a job is persisted successfully.
+func RecordEvaluationJobCreated(ctx context.Context, runtime string) {
+	if evaluationJobsTotal == nil {
+		return
+	}
+	evaluationJobsTotal.Add(ctx, 1, metric.WithAttributes(
+		attribute.String("action", "created"),
+		attribute.String("runtime", runtime),
+	))
+}
+
+// RecordEvaluationJobCancelled increments the counter when a job is cancelled (soft delete).
+func RecordEvaluationJobCancelled(ctx context.Context) {
+	if evaluationJobsTotal == nil {
+		return
+	}
+	evaluationJobsTotal.Add(ctx, 1, metric.WithAttributes(
+		attribute.String("action", "cancelled"),
+	))
+}
+
+// RecordEvaluationJobRuntimeStartFailed increments the counter when the runtime fails to start a job.
+func RecordEvaluationJobRuntimeStartFailed(ctx context.Context, runtime string) {
+	if evaluationJobsTotal == nil {
+		return
+	}
+	evaluationJobsTotal.Add(ctx, 1, metric.WithAttributes(
+		attribute.String("action", "runtime_start_failed"),
+		attribute.String("runtime", runtime),
+	))
+}
+
+// RecordEvaluationJobTerminalState records a transition into a terminal job state.
+func RecordEvaluationJobTerminalState(ctx context.Context, previous, newState api.OverallState) {
+	if evaluationJobCompletions == nil {
+		return
+	}
+	if !newState.IsTerminalState() || previous == newState {
+		return
+	}
+	evaluationJobCompletions.Add(ctx, 1, metric.WithAttributes(
+		attribute.String("state", string(newState)),
+	))
+}
+
+// RecordBenchmarkRuntimeError increments the counter when a runtime fails to schedule or start a benchmark.
+func RecordBenchmarkRuntimeError(ctx context.Context, runtime string) {
+	if benchmarkRuntimeErrorsTotal == nil {
+		return
+	}
+	benchmarkRuntimeErrorsTotal.Add(ctx, 1, metric.WithAttributes(
+		attribute.String("runtime", runtime),
+	))
+}

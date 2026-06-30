@@ -34,6 +34,7 @@ env_mappings:
   SIDECAR_PORT: sidecar.port
   METRICS_PORT: prometheus.port
   METRICS_HOST: prometheus.host
+  OTEL_METRIC_EXPORT_INTERVAL: otel.metric_export_interval
 
 # Database configuration
 database:
@@ -55,7 +56,7 @@ otel:
   exporter_insecure: false
   sampling_ratio: 1.0
   enable_tracing: true
-  # enable_metrics: true
+  enable_metrics: true  # required for otelhttp HTTP metrics and OTEL-bridged /metrics scrape
   # enable_logs: true
 prometheus:
   enabled: true

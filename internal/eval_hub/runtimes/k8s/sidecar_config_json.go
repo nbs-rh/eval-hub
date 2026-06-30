@@ -2,12 +2,13 @@ package k8s
 
 import (
 	"github.com/eval-hub/eval-hub/internal/eval_hub/config"
+	"github.com/eval-hub/eval-hub/internal/otel"
 )
 
 // sidecarForJobPod builds sidecar_config.json for the job ConfigMap from server
 // sidecar YAML plus per-job fields. Omits sidecar_container (image/resources); that is only for job spec.
 func sidecarForJobPod(cfg *config.Config, jc *jobConfig) (*config.SidecarConfig, error) {
-	if cfg != nil && cfg.Sidecar == nil && jc != nil && jc.evalHubURL == "" && jc.mlflowTrackingURI == "" {
+	if cfg != nil && cfg.Sidecar == nil && jc != nil && jc.evalHubURL == "" && jc.mlflowTrackingURI == "" && jc.modelTargetURL == "" {
 		return nil, nil
 	}
 
@@ -52,14 +53,33 @@ func sidecarForJobPod(cfg *config.Config, jc *jobConfig) (*config.SidecarConfig,
 			}
 		}
 		if jc.modelTargetURL != "" {
-			export.Model = &config.SidecarModelConfig{
-				URL:                 jc.modelTargetURL,
-				AuthSecretMountPath: modelAuthMountPath,
+			mc := &config.SidecarModelConfig{URL: jc.modelTargetURL}
+			// AuthSecretMountPath is only set when a credentials secret is configured;
+			// open models have no secret mount but still use the sidecar proxy.
+			if jc.modelAuthSecretRef != "" {
+				mc.AuthSecretMountPath = modelAuthMountPath
 			}
+			export.Model = mc
 		}
 	}
 
+	if otelCfg := otelConfigForJobPod(cfg); otelCfg != nil {
+		export.OTEL = otelCfg
+	}
+
 	return export, nil
+}
+
+func otelConfigForJobPod(cfg *config.Config) *config.OTELConfig {
+	if cfg == nil || cfg.OTEL == nil || !cfg.OTEL.Enabled {
+		return nil
+	}
+	out := *cfg.OTEL
+	out.TLSConfig = nil
+	if out.ServiceName == "" {
+		out.ServiceName = otel.SidecarServiceName
+	}
+	return &out
 }
 
 func cloneSidecarConfig(sc *config.SidecarConfig) *config.SidecarConfig {
@@ -82,6 +102,10 @@ func cloneSidecarConfig(sc *config.SidecarConfig) *config.SidecarConfig {
 	if sc.Model != nil {
 		m := *sc.Model
 		out.Model = &m
+	}
+	if sc.OTEL != nil {
+		o := *sc.OTEL
+		out.OTEL = &o
 	}
 	// SidecarContainer (image/resources) is for eval-hub job scheduling only, not the sidecar process.
 	return out

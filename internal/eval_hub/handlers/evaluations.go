@@ -15,6 +15,7 @@ import (
 	"github.com/eval-hub/eval-hub/internal/eval_hub/executioncontext"
 	"github.com/eval-hub/eval-hub/internal/eval_hub/http_wrappers"
 	"github.com/eval-hub/eval-hub/internal/eval_hub/messages"
+	"github.com/eval-hub/eval-hub/internal/eval_hub/metrics"
 	"github.com/eval-hub/eval-hub/internal/eval_hub/mlflow"
 	"github.com/eval-hub/eval-hub/internal/eval_hub/serialization"
 	"github.com/eval-hub/eval-hub/internal/eval_hub/serviceerrors"
@@ -62,7 +63,20 @@ func (s *runtimeStorage) GetProvider(id string) (*api.ProviderResource, error) {
 	return provider, nil
 }
 
+func (h *Handlers) runtimeName() string {
+	if h.runtime == nil {
+		return "none"
+	}
+	return h.runtime.Name()
+}
+
 func (s *runtimeStorage) UpdateEvaluationJob(id string, runStatus *api.StatusEvent) error {
+	var previousState api.OverallState
+	job, jobErr := s.scopedStorage().GetEvaluationJob(id)
+	if jobErr == nil && job != nil && job.Status != nil {
+		previousState = job.Status.State
+	}
+
 	err := s.validate.Struct(runStatus)
 	if err != nil {
 		s.logger.Info("Failed to validate evaluation job status from the runtime", "job_id", id, "error", err)
@@ -73,6 +87,10 @@ func (s *runtimeStorage) UpdateEvaluationJob(id string, runStatus *api.StatusEve
 		s.logger.Info("Failed to update evaluation job in storage", "job_id", id, "error", err)
 		return err
 	}
+
+	recordEvaluationJobTerminalStateAfterUpdate(s.ctx, func() (*api.EvaluationJobResource, error) {
+		return s.scopedStorage().GetEvaluationJob(id)
+	}, previousState)
 	return nil
 }
 
@@ -216,6 +234,8 @@ func (h *Handlers) HandleCreateEvaluation(ctx *executioncontext.ExecutionContext
 		return
 	}
 
+	metrics.RecordEvaluationJobCreated(ctx.Ctx, h.runtimeName())
+
 	_ = h.withSpan(
 		ctx,
 		func(runtimeCtx context.Context) error {
@@ -227,6 +247,8 @@ func (h *Handlers) HandleCreateEvaluation(ctx *executioncontext.ExecutionContext
 						Message:     runErr.Error(),
 						MessageCode: constants.MESSAGE_CODE_EVALUATION_JOB_FAILED,
 					}
+					metrics.RecordEvaluationJobRuntimeStartFailed(ctx.Ctx, h.runtimeName())
+					metrics.RecordEvaluationJobTerminalState(ctx.Ctx, api.OverallStatePending, state)
 					if err := storage.WithContext(runtimeCtx).UpdateEvaluationJobStatus(job.Resource.ID, state, message); err != nil {
 						ctx.Logger.Error("Failed to update evaluation status", "error", err, "job_id", job.Resource.ID)
 					}
@@ -460,14 +482,26 @@ func (h *Handlers) HandleUpdateEvaluation(ctx *executioncontext.ExecutionContext
 
 	ctx.Logger.Debug("Updating evaluation job", "id", evaluationJobID, "state", status.BenchmarkStatusEvent.Status, "status", status)
 
+	var previousState api.OverallState
+
 	_ = h.withSpan(
 		ctx,
 		func(runtimeCtx context.Context) error {
-			err = storage.WithContext(runtimeCtx).UpdateEvaluationJob(evaluationJobID, status)
+			scoped := storage.WithContext(runtimeCtx)
+			job, jobErr := scoped.GetEvaluationJob(evaluationJobID)
+			if jobErr == nil && job != nil && job.Status != nil {
+				previousState = job.Status.State
+			}
+
+			err = scoped.UpdateEvaluationJob(evaluationJobID, status)
 			if err != nil {
 				w.Error(err, ctx.RequestID)
 				return err
 			}
+
+			recordEvaluationJobTerminalStateAfterUpdate(runtimeCtx, func() (*api.EvaluationJobResource, error) {
+				return scoped.GetEvaluationJob(evaluationJobID)
+			}, previousState)
 			w.WriteJSON(nil, 204)
 			return nil
 		},
@@ -543,6 +577,11 @@ func (h *Handlers) HandleCancelEvaluation(ctx *executioncontext.ExecutionContext
 					return err
 				}
 			} else {
+				var previousState api.OverallState
+				job, jobErr := storage.WithContext(runtimeCtx).GetEvaluationJob(evaluationJobID)
+				if jobErr == nil && job != nil && job.Status != nil {
+					previousState = job.Status.State
+				}
 				err = storage.WithContext(runtimeCtx).UpdateEvaluationJobStatus(evaluationJobID, api.OverallStateCancelled, &api.MessageInfo{
 					Message:     "Evaluation job cancelled",
 					MessageCode: constants.MESSAGE_CODE_EVALUATION_JOB_CANCELLED,
@@ -552,6 +591,8 @@ func (h *Handlers) HandleCancelEvaluation(ctx *executioncontext.ExecutionContext
 					w.Error(err, ctx.RequestID)
 					return err
 				}
+				metrics.RecordEvaluationJobCancelled(ctx.Ctx)
+				metrics.RecordEvaluationJobTerminalState(ctx.Ctx, previousState, api.OverallStateCancelled)
 			}
 			w.WriteJSON(nil, 204)
 			return nil

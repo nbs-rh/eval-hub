@@ -12,6 +12,7 @@ import (
 	"github.com/eval-hub/eval-hub/internal/eval_hub/config"
 	"github.com/eval-hub/eval-hub/internal/eval_hub/constants"
 	"github.com/eval-hub/eval-hub/internal/eval_hub/messages"
+	"github.com/eval-hub/eval-hub/internal/eval_hub/metrics"
 	"github.com/eval-hub/eval-hub/internal/eval_hub/serviceerrors"
 	"github.com/eval-hub/eval-hub/pkg/api"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -65,6 +66,7 @@ func (r *K8sRuntime) RunEvaluationJob(
 		for idx, bench := range benchmarks {
 			benchCtx := context.Background()
 			if err := r.createBenchmarkResources(benchCtx, r.logger, evaluation, &bench, idx, storage); err != nil {
+				metrics.RecordBenchmarkRuntimeError(benchCtx, r.Name())
 				r.logger.Error(
 					"kubernetes job creation failed",
 					"error", err,
@@ -210,12 +212,16 @@ func (r *K8sRuntime) createBenchmarkResources(ctx context.Context,
 		"service_ca_configmap", jobConfig.serviceCAConfigMap,
 		"eval_hub_url", jobConfig.evalHubURL,
 	)
-	// Inspect the model credential secret once to decide the auth path.
-	// The sidecar model proxy is always started when model.auth is set — it handles SA token
-	// injection for unauthenticated adapter requests, ca_cert TLS, and ref-token resolution.
-	// Proxy-injectable keys (api-key, *_api-key, *_url) additionally activate credential
-	// injection: the adapter receives the ephemeral internalModelRef secret and sends a
-	// ref token that the sidecar resolves to the real credential.
+	// The sidecar model proxy is always active for all jobs. When model.auth is set,
+	// the secret is inspected to determine if credential injection (ref-token resolution)
+	// is needed. Proxy-injectable keys (api-key, *_api-key, *_url) cause an ephemeral
+	// internalModelRef secret to be created; the adapter sends ref tokens that the sidecar
+	// resolves to real credentials.
+	// Always redirect the adapter through the sidecar model proxy so all model traffic
+	// (open and authenticated) flows through the sidecar. This gives a single forwarding
+	// path and allows SA token injection for models that need it.
+	jobConfig.jobSpec.Model.URL = jobConfig.sidecarBaseURL
+
 	var secretInfo modelSecretInfo
 	if jobConfig.modelAuthSecretRef != "" {
 		secretInfo, err = inspectModelSecret(ctx, jobConfig.namespace, jobConfig.modelAuthSecretRef, r.helper)
@@ -223,17 +229,13 @@ func (r *K8sRuntime) createBenchmarkResources(ctx context.Context,
 			logger.Error("kubernetes model secret inspect error", "benchmark_id", benchmarkID, "error", err)
 			return fmt.Errorf("job %s benchmark %s: reading model auth secret: %w", evaluation.Resource.ID, benchmarkID, err)
 		}
-		// Always redirect the adapter through the sidecar model proxy when auth is configured.
-		// This ensures SA token injection and ca_cert TLS are applied even when the secret
-		// contains only ca_cert (no proxy-injectable api-key keys).
-		jobConfig.jobSpec.Model.URL = jobConfig.sidecarBaseURL
 		if secretInfo.hasCredentialKeys {
 			jobConfig.modelInternalRefSecretName = buildK8sName(jobConfig.jobID, jobConfig.resourceGUID, "-model-ref")
 		} else {
 			logger.Info("model credential secret has no proxy-injectable keys; sidecar proxy active for SA token")
 		}
 	}
-	// Build sidecar config after inspectModelSecret so modelTargetURL reflects the final state.
+	// Build sidecar config after inspecting the model secret so modelInternalRefSecretName is set.
 	sidecarJSON, err := sidecarForJobPod(r.serviceConfig, jobConfig)
 	if err != nil {
 		return fmt.Errorf("job %s benchmark %s: sidecar config json: %w", evaluation.Resource.ID, benchmarkID, err)

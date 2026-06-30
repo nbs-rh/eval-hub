@@ -25,12 +25,14 @@ import (
 	"github.com/Jeffail/gabs/v2"
 	"github.com/PaesslerAG/jsonpath"
 	"github.com/eval-hub/eval-hub/internal/eval_hub/config"
+	"github.com/eval-hub/eval-hub/internal/eval_hub/metrics"
 	"github.com/eval-hub/eval-hub/internal/eval_hub/mlflow"
 	"github.com/eval-hub/eval-hub/internal/eval_hub/runtimes"
 	"github.com/eval-hub/eval-hub/internal/eval_hub/server"
 	"github.com/eval-hub/eval-hub/internal/eval_hub/storage"
 	"github.com/eval-hub/eval-hub/internal/eval_hub/validation"
 	"github.com/eval-hub/eval-hub/internal/logging"
+	"github.com/eval-hub/eval-hub/internal/otel"
 	"github.com/eval-hub/eval-hub/internal/testhelpers"
 	pkgapi "github.com/eval-hub/eval-hub/pkg/api"
 	"github.com/xeipuuv/gojsonschema"
@@ -59,7 +61,7 @@ const (
 var (
 	// testConfig to be used throughout all the test suites
 	// for the global configuration
-	api *apiFeature
+	apiFeat *apiFeature
 
 	once   sync.Once
 	logger *log.Logger
@@ -72,6 +74,7 @@ type apiFeature struct {
 	metricsBaseURL *url.URL
 	server         *server.Server
 	httpServer     *http.Server
+	metricsServer  *server.MetricsServer
 	client         *http.Client
 }
 
@@ -100,6 +103,8 @@ type scenarioConfig struct {
 	jsonnetHarnessEnvOmit []string
 	// jsonnetMlflowEnabled overrides harness.mlflow_enabled when non-nil.
 	jsonnetMlflowEnabled *bool
+	// jsonnetQueueEnabled overrides harness.queue_enabled when non-nil.
+	jsonnetQueueEnabled *bool
 
 	waitDeadline time.Duration
 	waitInterval time.Duration
@@ -251,13 +256,27 @@ func createApiFeature() (*apiFeature, error) {
 		return nil, logError(err)
 	}
 
-	api := &apiFeature{
+	apiFeat := &apiFeature{
 		client:         client,
 		baseURL:        baseURL,
 		metricsBaseURL: metricsBase,
 	}
-	api.startLocalServer(port)
-	return api, nil
+	apiFeat.startLocalServer(port)
+	return apiFeat, nil
+}
+
+// ensureFVTOTELConfig enables OTEL metrics export for embedded FVT servers when Prometheus
+// scraping is configured. HTTP request duration is collected by otelhttp.
+func ensureFVTOTELConfig(serviceConfig *config.Config) {
+	if serviceConfig == nil || !serviceConfig.IsPrometheusEnabled() {
+		return
+	}
+	if serviceConfig.OTEL == nil {
+		serviceConfig.OTEL = &config.OTELConfig{}
+	}
+	serviceConfig.OTEL.Enabled = true
+	serviceConfig.OTEL.EnableMetrics = true
+	serviceConfig.OTEL.ExporterType = otel.ExporterTypeStdout
 }
 
 func (a *apiFeature) startLocalServer(port int) error {
@@ -306,7 +325,26 @@ func (a *apiFeature) startLocalServer(port int) error {
 		return logError(fmt.Errorf("failed to load collection configs: %w", err))
 	}
 
-	storage, err := storage.NewStorage(serviceConfig.Database, collectionConfigs, providerConfigs, serviceConfig.IsOTELStorageScansEnabled(), logger)
+	ensureFVTOTELConfig(serviceConfig)
+	if serviceConfig.IsOTELEnabled() {
+		if _, err := otel.SetupOTEL(context.Background(), serviceConfig.OTEL, logger, serviceConfig.IsPrometheusEnabled()); err != nil {
+			return logError(fmt.Errorf("failed to setup OTEL: %w", err))
+		}
+	}
+	if serviceConfig.IsOTELMetricsEnabled() {
+		if err := metrics.Init(); err != nil {
+			return logError(fmt.Errorf("failed to initialize OTEL metrics: %w", err))
+		}
+	}
+
+	storage, err := storage.NewStorage(
+		serviceConfig.Database,
+		collectionConfigs,
+		providerConfigs,
+		serviceConfig.IsOTELStorageScansEnabled(),
+		serviceConfig.IsOTELMetricsEnabled(),
+		logger,
+	)
 	if err != nil {
 		return logError(fmt.Errorf("failed to create storage: %w", err))
 	}
@@ -349,10 +387,24 @@ func (a *apiFeature) startLocalServer(port int) error {
 		a.httpServer.Serve(listener)
 	}()
 
+	if serviceConfig.IsPrometheusEnabled() {
+		a.metricsServer = server.NewMetricsServer(logger, serviceConfig.Prometheus)
+		go func() {
+			if err := a.metricsServer.Start(); err != nil {
+				logger.Error("Metrics server failed", "error", err.Error())
+			}
+		}()
+	}
+
 	return nil
 }
 
 func (a *apiFeature) cleanup(ctx context.Context, _ *godog.Scenario, _ error) (context.Context, error) {
+	if a.metricsServer != nil {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_ = a.metricsServer.Shutdown(shutdownCtx)
+		cancel()
+	}
 	if a.httpServer != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
@@ -1396,7 +1448,15 @@ func (tc *scenarioConfig) requireMetricsURLForRemoteServer(ctx context.Context, 
 
 func (tc *scenarioConfig) saveScenarioName(ctx context.Context, sc *godog.Scenario) (context.Context, error) {
 	tc.scenarioName = sc.Name
+	tc.jsonnetQueueEnabled = nil
 	return ctx, nil
+}
+
+func (tc *scenarioConfig) queueIsEnabledForJsonnetPayloads() error {
+	queueOn := true
+	tc.jsonnetQueueEnabled = &queueOn
+	logDebug("Queue enabled for jsonnet payloads\n")
+	return nil
 }
 
 func (tc *scenarioConfig) assetCleanup(ctx context.Context, sc *godog.Scenario, err error) (context.Context, error) {
@@ -1458,19 +1518,19 @@ func setUpTestConf() {
 	if err != nil {
 		panic(logError(fmt.Errorf("failed to create API feature: %v", err)))
 	}
-	api = apiFeature
+	apiFeat = apiFeature
 }
 
 func waitForService() {
-	tc := createScenarioConfig(api)
+	tc := createScenarioConfig(apiFeat)
 	if err := tc.theServiceIsRunning(context.Background()); err != nil {
 		panic("Stopped API Tests. Service is not ready for testing.\n")
 	}
 }
 
 func tidyUpTests() {
-	if api != nil {
-		api.cleanup(context.Background(), nil, nil)
+	if apiFeat != nil {
+		apiFeat.cleanup(context.Background(), nil, nil)
 	}
 	if s, ok := logger.Writer().(*os.File); ok {
 		err := s.Close()
@@ -1532,7 +1592,7 @@ func (tc *scenarioConfig) theModelEndpointIsReachable() error {
 
 // A bit of a hack to have some checks that the regexes are working as expected
 func checkRegexes() {
-	tc := createScenarioConfig(api)
+	tc := createScenarioConfig(apiFeat)
 	paths := [][]string{
 		{"/api/v1/evaluations", "evaluations", "", ""},
 		{"/api/v1/evaluations/jobs", "evaluations", "jobs", ""},
@@ -1620,13 +1680,14 @@ func InitializeTestSuite(ctx *godog.TestSuiteContext) {
 }
 
 func InitializeScenario(ctx *godog.ScenarioContext) {
-	tc := createScenarioConfig(api)
+	tc := createScenarioConfig(apiFeat)
 
 	ctx.Before(tc.saveScenarioName)
 	ctx.Before(tc.requireMetricsURLForRemoteServer)
 	ctx.After(tc.assetCleanup)
 
 	ctx.Step(`^the service is running$`, tc.theServiceIsRunning)
+	ctx.Step(`^queue is enabled for payloads$`, tc.queueIsEnabledForJsonnetPayloads)
 	ctx.Step(`^the model endpoint is reachable$`, tc.theModelEndpointIsReachable)
 	ctx.Step(`^there are system providers$`, tc.thereAreSystemProviders)
 	ctx.Step(`^there are system collections$`, tc.thereAreSystemCollections)
