@@ -59,7 +59,9 @@ func TestModelProxyLogsRequestID(t *testing.T) {
 
 func TestResolveModelCredentialLogsRequestID(t *testing.T) {
 	var logBuf bytes.Buffer
-	log := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	base := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	// Callers pass a logger pre-enriched with request_id; simulate that here.
+	log := base.With("request_id", "resolve-req-id")
 
 	secretDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(secretDir, "api-key"), []byte("sk-real-key"), 0600); err != nil {
@@ -67,8 +69,8 @@ func TestResolveModelCredentialLogsRequestID(t *testing.T) {
 	}
 
 	target, _ := url.Parse("https://model.example.com/v1")
-	cache := loadSecretCache(secretDir, log)
-	_, _, err := resolveModelCredential(log, "resolve-req-id", "Bearer api-key:ref", cache, target)
+	cache := loadSecretCache(secretDir, base)
+	_, _, err := resolveModelCredential(log, "Bearer api-key:ref", cache, target, "")
 	if err != nil {
 		t.Fatalf("resolveModelCredential: %v", err)
 	}
@@ -392,5 +394,148 @@ func TestModelProxySATokenNotInjectedWhenAuthPresent(t *testing.T) {
 	}
 	if gotAuth != "Bearer sk-explicit-key" {
 		t.Fatalf("expected explicit auth forwarded unchanged, got %q", gotAuth)
+	}
+}
+
+// TestModelProxySATokenSuffixInjectsSATokenWhenEmpty verifies the KFP path:
+// secret has "kfp_sa_token: """ (empty) — sidecar injects the SA token and routes to kfp_url.
+func TestModelProxySATokenSuffixInjectsSATokenWhenEmpty(t *testing.T) {
+	// Clear the shared SA token cache so we read from the file written by this test.
+	UpdateCachedToken(AuthTokenInput{TargetEndpoint: "model-sa"}, "")
+	var gotAuth, gotHost string
+	kfpUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		gotHost = r.Host
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer kfpUpstream.Close()
+
+	defaultUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer defaultUpstream.Close()
+
+	saTokenDir := t.TempDir()
+	saTokenPath := filepath.Join(saTokenDir, "token")
+	if err := os.WriteFile(saTokenPath, []byte("sa-token-injected"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	secretDir := t.TempDir()
+	writeFile := func(name, content string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(secretDir, name), []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// kfp_sa_token is intentionally empty — SA token should be injected.
+	writeFile("kfp_sa_token", "")
+	writeFile("kfp_url", kfpUpstream.URL)
+
+	defaultTarget, _ := url.Parse(defaultUpstream.URL)
+	rp := NewModelReverseProxy(defaultTarget, &http.Client{}, slog.New(slog.NewTextHandler(io.Discard, nil)), secretDir, saTokenPath)
+
+	req := httptest.NewRequest(http.MethodGet, "/apis/v1beta1/runs", nil)
+	req.Header.Set("Authorization", "Bearer kfp_sa_token:ref")
+	rr := httptest.NewRecorder()
+	rp.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if gotAuth != "Bearer sa-token-injected" {
+		t.Fatalf("expected SA token injected, got %q", gotAuth)
+	}
+	kfpHost := strings.TrimPrefix(kfpUpstream.URL, "http://")
+	if gotHost != kfpHost {
+		t.Fatalf("expected request routed to kfp upstream %q, got host %q", kfpHost, gotHost)
+	}
+}
+
+// TestModelProxySATokenSuffixUsesExplicitValueWhenNonEmpty verifies that when kfp_sa_token has a
+// non-empty value (e.g. a user-provided JWT), it is forwarded as-is without SA injection.
+func TestModelProxySATokenSuffixUsesExplicitValueWhenNonEmpty(t *testing.T) {
+	var gotAuth string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+
+	secretDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(secretDir, "kfp_sa_token"), []byte("user-provided-jwt"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	target, _ := url.Parse(upstream.URL)
+	rp := NewModelReverseProxy(target, &http.Client{}, slog.New(slog.NewTextHandler(io.Discard, nil)), secretDir, "")
+
+	req := httptest.NewRequest(http.MethodGet, "/apis/v1beta1/runs", nil)
+	req.Header.Set("Authorization", "Bearer kfp_sa_token:ref")
+	rr := httptest.NewRecorder()
+	rp.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	if gotAuth != "Bearer user-provided-jwt" {
+		t.Fatalf("expected explicit token forwarded, got %q", gotAuth)
+	}
+}
+
+// TestModelProxyReturns400OnURLKeyRef verifies that a *_url:ref Bearer token is rejected
+// with 400. URL keys are routing hints — not credentials — and must never be forwarded
+// as bearer tokens even if the key exists in the secret cache.
+func TestModelProxyReturns400OnURLKeyRef(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+
+	secretDir := t.TempDir()
+	// kfp_url is present in cache — proxy must still reject it as a ref token.
+	if err := os.WriteFile(filepath.Join(secretDir, "kfp_url"), []byte(upstream.URL), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	target, _ := url.Parse(upstream.URL)
+	rp := NewModelReverseProxy(target, &http.Client{}, slog.New(slog.NewTextHandler(io.Discard, nil)), secretDir, "")
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/completions", nil)
+	req.Header.Set("Authorization", "Bearer kfp_url:ref")
+	rr := httptest.NewRecorder()
+	rp.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for _url ref key, got %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestModelProxySATokenSuffixReturns400WhenEmptyAndNoSAToken verifies that when kfp_sa_token is
+// empty and no SA token is available, the proxy returns 400 rather than forwarding.
+func TestModelProxySATokenSuffixReturns400WhenEmptyAndNoSAToken(t *testing.T) {
+	// Clear the shared SA token cache so a stale token from a prior test doesn't mask the error.
+	UpdateCachedToken(AuthTokenInput{TargetEndpoint: "model-sa"}, "")
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+
+	secretDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(secretDir, "kfp_sa_token"), []byte(""), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	target, _ := url.Parse(upstream.URL)
+	// No SA token path — simulates unavailable SA token.
+	rp := NewModelReverseProxy(target, &http.Client{}, slog.New(slog.NewTextHandler(io.Discard, nil)), secretDir, "")
+
+	req := httptest.NewRequest(http.MethodGet, "/apis/v1beta1/runs", nil)
+	req.Header.Set("Authorization", "Bearer kfp_sa_token:ref")
+	rr := httptest.NewRecorder()
+	rp.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 when _sa_token empty and no SA token, got %d", rr.Code)
 	}
 }

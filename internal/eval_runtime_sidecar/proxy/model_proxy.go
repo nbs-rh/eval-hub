@@ -18,10 +18,17 @@ import (
 // A Bearer token "api-key:ref" means: look up "api-key" in the secret cache.
 const modelRefSuffix = ":ref"
 
-// modelAPIKeySuffix and modelURLSuffix are the key-naming conventions for multi-model secrets.
+// Key-naming conventions for multi-service secrets.
+//
+// _api-key holds an opaque API key forwarded as-is.
+// _sa_token holds a bearer token; when its value is empty the sidecar injects the pod SA token
+// from saTokenPath — this is the mechanism for KFP and other SA-token-authenticated services.
+// _url holds the real upstream URL for the corresponding prefix.
 const (
-	modelAPIKeySuffix = "_api-key"
-	modelURLSuffix    = "_url"
+	modelSingleAPIKey  = "api-key"
+	modelAPIKeySuffix  = "_api-key"
+	modelSATokenSuffix = "_sa_token"
+	modelURLSuffix     = "_url"
 )
 
 // xModelCredError is an internal sentinel header set by the Director when ref resolution fails.
@@ -52,12 +59,15 @@ func loggerForRequest(logger *slog.Logger, req *http.Request) *slog.Logger {
 // for the pod's lifetime — so per-request file reads are unnecessary.
 //
 // Per-request behaviour:
-//  1. If the Authorization header carries a ref token (e.g. "Bearer model-1_api-key:ref"):
+//  1. If the Authorization header carries a ref token (e.g. "Bearer kfp_sa_token:ref"):
 //     a. The credential is looked up from the in-memory cache by key name.
-//     b. The upstream URL is looked up from the cache under model-1_url; falls back to
-//     defaultTarget when absent (single-model case).
-//  2. If resolution fails (key not in cache, path traversal) the proxy returns HTTP 400
-//     to the eval container — the request is never forwarded.
+//     b. For *_api-key keys: credential must be non-empty; upstream URL comes from *_url.
+//     c. For *_sa_token keys: when the secret value is empty the SA token from saTokenPath is
+//     injected instead — this is the KFP path (kfp_sa_token: "" in the secret, SA injected).
+//     d. The upstream URL is looked up from the cache under *_url for both suffixes;
+//     falls back to defaultTarget when absent.
+//  2. If resolution fails (key not in cache, path traversal, empty _api-key) the proxy
+//     returns HTTP 400 to the eval container — the request is never forwarded.
 //  3. If no Authorization header is present, the SA token from saTokenPath is injected as
 //     a Bearer token. This covers SA-token-authenticated models: the adapter has no access
 //     to the SA token (pod-level auto-mount is disabled), so the sidecar injects it on
@@ -83,7 +93,7 @@ func NewModelReverseProxy(defaultTarget *url.URL, client *http.Client, logger *s
 
 		authHeader := pr.In.Header.Get("Authorization")
 		if isModelRefToken(authHeader) {
-			resolvedTarget, realToken, err := resolveModelCredential(logger, reqID, authHeader, secretCache, defaultTarget)
+			resolvedTarget, realToken, err := resolveModelCredential(reqLog, authHeader, secretCache, defaultTarget, saTokenPath)
 			if err != nil {
 				// Signal the RoundTripper to return 400 without forwarding.
 				pr.Out.Header.Set(xModelCredError, err.Error())
@@ -209,9 +219,10 @@ func loadSecretCache(mountPath string, logger *slog.Logger) map[string]string {
 			logger.Warn("skipping unreadable secret file", "file", e.Name(), "error", err)
 			continue
 		}
-		if v := strings.TrimSpace(string(data)); v != "" {
-			cache[e.Name()] = v
-		}
+		// Store all values including empty ones: _sa_token keys may legitimately be empty
+		// (signals SA token injection), and we need to distinguish "key present, value
+		// empty" from "key absent".
+		cache[e.Name()] = strings.TrimSpace(string(data))
 	}
 	keys := make([]string, 0, len(cache))
 	for k := range cache {
@@ -221,14 +232,27 @@ func loadSecretCache(mountPath string, logger *slog.Logger) map[string]string {
 	return cache
 }
 
+// isCredentialKey reports whether key is a valid credential ref key.
+// Only "api-key", *_api-key, and *_sa_token keys may appear as Bearer ref tokens.
+// _url and other keys are not credentials and must not be forwarded as tokens.
+func isCredentialKey(key string) bool {
+	return key == modelSingleAPIKey ||
+		strings.HasSuffix(key, modelAPIKeySuffix) ||
+		strings.HasSuffix(key, modelSATokenSuffix)
+}
+
 // resolveModelCredential resolves a Bearer ref token to a (upstream URL, credential) pair
 // using the pre-loaded in-memory secret cache.
 //
-// Key derivation for the upstream URL:
-//   - "model-1_api-key:ref" → looks up "model-1_api-key" (token) and "model-1_url" (URL)
-//     in secretCache; falls back to defaultTarget when the URL key is absent.
-//   - "api-key:ref" → looks up the credential; always uses defaultTarget.
-func resolveModelCredential(logger *slog.Logger, requestID, authHeader string, secretCache map[string]string, defaultTarget *url.URL) (*url.URL, string, error) {
+// Key derivation:
+//   - "*_api-key:ref" → credential must be non-empty; upstream URL from *_url.
+//   - "*_sa_token:ref" → when secret value is empty, the SA token from saTokenPath is injected
+//     instead (KFP path); upstream URL from *_url.
+//   - "api-key:ref"   → single-model shorthand; always uses defaultTarget.
+//
+// Any other key suffix (e.g. *_url) is rejected with an error — non-credential
+// keys must not be forwarded as bearer tokens.
+func resolveModelCredential(logger *slog.Logger, authHeader string, secretCache map[string]string, defaultTarget *url.URL, saTokenPath string) (*url.URL, string, error) {
 	token := strings.TrimPrefix(authHeader, "Bearer ")
 	key := strings.TrimSuffix(token, modelRefSuffix)
 
@@ -236,32 +260,71 @@ func resolveModelCredential(logger *slog.Logger, requestID, authHeader string, s
 		return nil, "", fmt.Errorf("model ref token has invalid key %q", key)
 	}
 
-	realToken, ok := secretCache[key]
+	// Reject non-credential key suffixes early — _url and any unknown suffixes
+	// must not be resolved as bearer tokens.
+	if !isCredentialKey(key) {
+		return nil, "", fmt.Errorf("ref key %q is not a credential key (must be api-key, *_api-key, or *_sa_token)", key)
+	}
+
+	secretValue, ok := secretCache[key]
 	if !ok {
-		logger.Error("model credential not found in cache", "request_id", requestID, "key", key)
+		logger.Error("model credential not found in cache", "key", key)
 		return nil, "", fmt.Errorf("credential not found for key %q", key)
 	}
-	if realToken == "" {
-		return nil, "", fmt.Errorf("credential for key %q is empty", key)
-	}
 
-	target := defaultTarget
-
-	// For multi-model keys (*_api-key), look up the corresponding URL entry.
-	if strings.HasSuffix(key, modelAPIKeySuffix) {
-		prefix := strings.TrimSuffix(key, modelAPIKeySuffix)
-		urlKey := prefix + modelURLSuffix
-		if rawURL, exists := secretCache[urlKey]; exists && rawURL != "" {
-			parsed, parseErr := url.Parse(strings.TrimSuffix(rawURL, "/"))
-			if parseErr != nil || !parsed.IsAbs() || parsed.Host == "" {
-				logger.Warn("model URL in secret cache is invalid, using default target",
-					"request_id", requestID, "url_key", urlKey, "error", parseErr)
-			} else {
-				target = parsed
+	var realToken string
+	switch {
+	case strings.HasSuffix(key, modelSATokenSuffix):
+		// _sa_token keys: empty value means inject the pod SA token from saTokenPath.
+		if secretValue != "" {
+			realToken = secretValue
+		} else {
+			realToken = resolveEvalHubOrMLflowToken(logger, AuthTokenInput{
+				TargetEndpoint: "model-sa",
+				AuthTokenPath:  saTokenPath,
+			})
+			if realToken == "" {
+				return nil, "", fmt.Errorf("_sa_token credential for key %q is empty and SA token is unavailable", key)
 			}
+			logger.Info("Injected SA token for _sa_token credential", "key", key)
 		}
+	default:
+		// api-key and *_api-key: value must be non-empty.
+		if secretValue == "" {
+			return nil, "", fmt.Errorf("credential for key %q is empty", key)
+		}
+		realToken = secretValue
 	}
 
-	logger.Info("Resolved model ref token", "request_id", requestID, "key", key, "target_host", target.Host)
+	target := resolveUpstreamURL(logger, key, secretCache, defaultTarget)
+	logger.Info("Resolved model ref token", "key", key, "target_host", target.Host)
 	return target, realToken, nil
+}
+
+// resolveUpstreamURL returns the upstream URL for a secret key by stripping the credential
+// suffix (_api-key or _sa_token) and looking up <prefix>_url in the cache.
+// Falls back to defaultTarget when no URL entry exists or the entry is invalid.
+func resolveUpstreamURL(logger *slog.Logger, key string, secretCache map[string]string, defaultTarget *url.URL) *url.URL {
+	var prefix string
+	switch {
+	case strings.HasSuffix(key, modelAPIKeySuffix):
+		prefix = strings.TrimSuffix(key, modelAPIKeySuffix)
+	case strings.HasSuffix(key, modelSATokenSuffix):
+		prefix = strings.TrimSuffix(key, modelSATokenSuffix)
+	default:
+		return defaultTarget
+	}
+
+	urlKey := prefix + modelURLSuffix
+	rawURL, exists := secretCache[urlKey]
+	if !exists || rawURL == "" {
+		return defaultTarget
+	}
+	parsed, err := url.Parse(strings.TrimSuffix(rawURL, "/"))
+	if err != nil || !parsed.IsAbs() || parsed.Host == "" {
+		logger.Warn("service URL in secret cache is invalid, using default target",
+			"url_key", urlKey, "error", err)
+		return defaultTarget
+	}
+	return parsed
 }

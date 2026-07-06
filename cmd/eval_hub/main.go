@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"flag"
-	"fmt"
 	"log"
 	"log/slog"
 
@@ -59,6 +58,11 @@ func args() Args {
 func main() {
 	args := args()
 
+	startUpFailed := func(conf *config.Config, err error, msg string, logger *slog.Logger) {
+		server.HandleStartupFailure(conf, args.LocalMode, err, msg, logger)
+		log.Fatal(err)
+	}
+
 	logger, logShutdown, err := logging.NewLogger()
 	if err != nil {
 		// we do this as no point trying to continue
@@ -98,6 +102,12 @@ func main() {
 			startUpFailed(serviceConfig, err, "Failed to setup OTEL", logger)
 		}
 		otelShutdown = shutdown
+		if serviceConfig.IsOTELLogsEnabled() {
+			logger = otel.BridgeSlogToOTEL(logger)
+		}
+	}
+	if serviceConfig.OTEL != nil && serviceConfig.OTEL.EnableJobContainerLogs && !serviceConfig.IsOTELLogsEnabled() {
+		logger.Warn("otel.enable_job_container_logs requires otel.enable_logs; container log export is disabled")
 	}
 
 	if serviceConfig.IsOTELMetricsEnabled() {
@@ -244,13 +254,4 @@ func main() {
 		logger.Info("API Server shutdown gracefully")
 		_ = logShutdown() // ignore the error
 	}
-}
-
-func startUpFailed(conf *config.Config, err error, msg string, logger *slog.Logger) {
-	termErr := server.SetTerminationMessage(server.GetTerminationFile(conf, logger), fmt.Sprintf("%s: %s", msg, err.Error()), logger)
-	if termErr != nil {
-		logger.Error("Failed to set termination message", "message", msg, "error", termErr.Error())
-		log.Println(termErr.Error())
-	}
-	log.Fatal(err)
 }

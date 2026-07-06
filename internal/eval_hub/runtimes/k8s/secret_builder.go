@@ -10,23 +10,27 @@ import (
 )
 
 const (
-	modelAPIKeySuffix = "_api-key"
-	modelURLSuffix    = "_url"
-	modelHFTokenKey   = "hf-token"
-	modelCACertKey    = "ca_cert"
-	modelSingleAPIKey = "api-key"
+	modelAPIKeySuffix  = "_api-key"
+	modelSATokenSuffix = "_sa_token"
+	modelURLSuffix     = "_url"
+	modelHFTokenKey    = "hf-token"
+	modelCACertKey     = "ca_cert"
+	modelSingleAPIKey  = "api-key"
 )
 
 // isModelCredentialKey reports whether k is a proxy-injectable credential key
-// (api-key, *_api-key, or *_url).
+// (api-key, *_api-key, *_sa_token, or *_url).
 func isModelCredentialKey(k string) bool {
-	return k == modelSingleAPIKey || strings.HasSuffix(k, modelAPIKeySuffix) || strings.HasSuffix(k, modelURLSuffix)
+	return k == modelSingleAPIKey ||
+		strings.HasSuffix(k, modelAPIKeySuffix) ||
+		strings.HasSuffix(k, modelSATokenSuffix) ||
+		strings.HasSuffix(k, modelURLSuffix)
 }
 
 // modelSecretInfo holds the result of inspecting the model credential secret.
 type modelSecretInfo struct {
 	// hasCredentialKeys is true when the secret contains at least one proxy-injectable
-	// key (api-key, *_api-key, *_url), meaning credential injection should be activated.
+	// key (api-key, *_api-key, *_sa_token, or *_url), meaning credential injection should be activated.
 	hasCredentialKeys bool
 	// data is the full secret data, populated when hasCredentialKeys is true so callers
 	// can build the internalModelRef secret without a second API call.
@@ -59,6 +63,7 @@ func inspectModelSecret(ctx context.Context, namespace, secretName string, helpe
 //
 //   - "api-key"          → value becomes "api-key:ref" (sidecar injects real key)
 //   - "*_api-key" suffix → value becomes "<key>:ref"   (sidecar injects real key)
+//   - "*_sa_token" suffix → value becomes "<key>:ref"   (sidecar injects SA token when value empty)
 //   - "*_url" suffix     → value becomes sidecarProxyURL (adapter routes through sidecar)
 //   - "hf-token"         → omitted; projected directly from the model credential secret
 //   - "ca_cert"          → omitted; projected directly from the model credential secret
@@ -95,8 +100,8 @@ func buildInternalModelRefSecret(
 	}
 
 	if len(refData) == 0 {
-		return nil, fmt.Errorf("model credential secret data contains no recognised credential keys (expected %q or keys with %q or %q suffix)",
-			modelSingleAPIKey, modelAPIKeySuffix, modelURLSuffix)
+		return nil, fmt.Errorf("model credential secret data contains no recognised credential keys (expected %q or keys with %q, %q, or %q suffix)",
+			modelSingleAPIKey, modelAPIKeySuffix, modelSATokenSuffix, modelURLSuffix)
 	}
 
 	secret := &corev1.Secret{

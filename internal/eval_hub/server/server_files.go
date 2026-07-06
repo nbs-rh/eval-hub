@@ -11,9 +11,12 @@ import (
 	"github.com/eval-hub/eval-hub/internal/eval_hub/constants"
 )
 
-// handle ready and termination messages
+// handle termination messages
 
-func GetTerminationFile(conf *config.Config, logger *slog.Logger) string {
+func GetTerminationFile(conf *config.Config, localMode bool, logger *slog.Logger) string {
+	if localMode {
+		return ""
+	}
 	tf := ""
 	if (conf != nil) && (conf.Service != nil) {
 		tf = strings.TrimSpace(conf.Service.TerminationFile)
@@ -51,14 +54,16 @@ func writeFile(fname string, message string, fileType string, logger *slog.Logge
 	return err
 }
 
-func getReadyContents(conf *config.Config) string {
-	return fmt.Sprintf("Version: %s\nBuild: %s\nBuildDate: %s\n", conf.Service.Version, conf.Service.Build, conf.Service.BuildDate)
-}
-
-func SetReady(conf *config.Config, logger *slog.Logger) error {
-	return writeFile(conf.Service.ReadyFile, getReadyContents(conf), "ready", logger)
-}
-
 func SetTerminationMessage(terminationFile string, message string, logger *slog.Logger) error {
+	if terminationFile == "" {
+		return nil
+	}
 	return writeFile(terminationFile, message, "termination", logger)
+}
+
+func HandleStartupFailure(conf *config.Config, localMode bool, err error, msg string, logger *slog.Logger) {
+	termErr := SetTerminationMessage(GetTerminationFile(conf, localMode, logger), fmt.Sprintf("%s: %s", msg, err.Error()), logger)
+	if termErr != nil {
+		logger.Error("Failed to set termination message", "message", msg, "error", termErr.Error())
+	}
 }

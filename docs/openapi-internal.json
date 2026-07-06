@@ -929,6 +929,182 @@
         }
       }
     },
+    "/api/v1/evaluations/jobs/{id}/logs": {
+      "get": {
+        "tags": [
+          "Evaluations"
+        ],
+        "summary": "Get Evaluation Job Logs",
+        "description": "Returns plain-text workload logs for all benchmarks in an evaluation job.\n\n**Kubernetes runtime:** adapter container stdout/stderr via the Kubernetes API.\n**Local runtime:** contents of each benchmark's `jobrun.log` file under\n`/tmp/evalhub-jobs/{job_id}/{benchmark_index}/{provider_id}/{benchmark_id}/`.\nLogs are fetched on demand from the active runtime. Distinct from `logs_path` on\nbenchmark results, which refers to adapter-written artifact files.\n",
+        "operationId": "get_evaluations_jobs_id_logs",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Id"
+            }
+          },
+          {
+            "name": "tail_lines",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10000,
+              "default": 1000,
+              "description": "Maximum number of log lines to return per benchmark. The response\nconcatenates one section per benchmark; each section is capped\nindependently, not as a total across the full response.\n"
+            }
+          },
+          {
+            "name": "timestamps",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "description": "Include Kubernetes log timestamps"
+            }
+          },
+          {
+            "name": "since_seconds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Only return logs newer than this many seconds"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                },
+                "examples": {
+                  "response": {
+                    "summary": "Plain-text logs for all benchmarks in a job",
+                    "value": "=== pod=a1b2c3d4-405ef22a-abc12 container=adapter benchmark_id=arc_easy ===\nINFO starting evaluation\nINFO benchmark completed\n"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/v1/evaluations/jobs/{id}/benchmarks/{benchmark_index}/logs": {
+      "get": {
+        "tags": [
+          "Evaluations"
+        ],
+        "summary": "Get Evaluation Benchmark Logs",
+        "description": "Returns plain-text workload logs for a single benchmark within an evaluation job.\nThe benchmark is identified by `benchmark_index` in the request path.\n\n**Kubernetes runtime:** adapter container stdout/stderr via the Kubernetes API.\n**Local runtime:** contents of the benchmark's `jobrun.log` file. See\n`GET /api/v1/evaluations/jobs/{id}/logs` for shared query parameters.\n",
+        "operationId": "get_evaluations_jobs_id_benchmarks_benchmark_index_logs",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Id"
+            }
+          },
+          {
+            "name": "benchmark_index",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "title": "Benchmark Index"
+            }
+          },
+          {
+            "name": "tail_lines",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10000,
+              "default": 1000,
+              "description": "Maximum number of log lines to return"
+            }
+          },
+          {
+            "name": "timestamps",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "description": "Include Kubernetes log timestamps"
+            }
+          },
+          {
+            "name": "since_seconds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Only return logs newer than this many seconds"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                },
+                "examples": {
+                  "response": {
+                    "summary": "Plain-text logs for one benchmark",
+                    "value": "INFO starting evaluation\nINFO benchmark completed\n"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
     "/api/v1/evaluations/providers": {
       "get": {
         "tags": [
@@ -3003,6 +3179,11 @@
             "additionalProperties": true,
             "description": "Metric name to value"
           },
+          "additional_info": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Additional benchmark information"
+          },
           "artifacts": {
             "type": "object",
             "additionalProperties": true,
@@ -3658,6 +3839,11 @@
             "additionalProperties": true,
             "description": "Benchmark metrics"
           },
+          "additional_info": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Additional benchmark information"
+          },
           "artifacts": {
             "type": "object",
             "additionalProperties": true,
@@ -3844,6 +4030,14 @@
               "$ref": "#/components/schemas/EnvVar"
             },
             "description": "Environment variables for the job"
+          },
+          "image_pull_policy": {
+            "type": "string",
+            "enum": [
+              "if_not_present",
+              "always"
+            ],
+            "description": "When the adapter container image is pulled. API values are if_not_present (default when omitted) or always. EvalHub maps these to the Kubernetes imagePullPolicy values IfNotPresent and Always on the adapter container only. Custom providers may set always during development to pick up fresh image tags. Sidecar and init containers are not configurable and always use the Kubernetes IfNotPresent policy.\n"
           }
         },
         "required": [
