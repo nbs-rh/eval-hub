@@ -308,7 +308,7 @@ func TestHandleCreateEvaluationMarksFailedWhenRuntimeErrors(t *testing.T) {
 	runtime := &fakeRuntime{err: errors.New("runtime failed")}
 	validate := validation.NewValidator()
 
-	h := handlers.New(storage, validate, runtime, nil, nil)
+	h := handlers.New(storage, validate, runtime, nil, nil, nil)
 	ctx := executioncontext.NewExecutionContext(context.Background(), "req-1", logger, "test-user", "")
 
 	req := &bodyRequest{
@@ -352,7 +352,7 @@ func TestHandleCreateEvaluationSucceedsWhenRuntimeOk(t *testing.T) {
 	storage := &fakeStorage{providerConfigs: providerConfigs}
 	runtime := &fakeRuntime{}
 	validate := validation.NewValidator()
-	h := handlers.New(storage, validate, runtime, nil, nil)
+	h := handlers.New(storage, validate, runtime, nil, nil, nil)
 	ctx := executioncontext.NewExecutionContext(context.Background(), "req-2", logger, "test-user", "test-tenant")
 
 	req := &bodyRequest{
@@ -387,7 +387,7 @@ func TestHandleCancelEvaluationWithSoftDeleteDoesNotCleanupResources(t *testing.
 	}
 	runtime := &fakeRuntime{}
 	validate := validation.NewValidator()
-	h := handlers.New(storage, validate, runtime, nil, nil)
+	h := handlers.New(storage, validate, runtime, nil, nil, nil)
 	ctx := executioncontext.NewExecutionContext(context.Background(), "req-3", logger, "test-user", "test-tenant")
 
 	req := &deleteRequest{
@@ -429,7 +429,7 @@ func TestHandleDeleteEvaluationCleansUpResources(t *testing.T) {
 	}
 	runtime := &fakeRuntime{}
 	validate := validation.NewValidator()
-	h := handlers.New(storage, validate, runtime, nil, nil)
+	h := handlers.New(storage, validate, runtime, nil, nil, nil)
 	ctx := executioncontext.NewExecutionContext(context.Background(), "req-4", logger, "test-user", "test-tenant")
 
 	req := &deleteRequest{
@@ -458,7 +458,7 @@ func TestHandleCreateEvaluationRejectsMissingBenchmarkID(t *testing.T) {
 	storage := &fakeStorage{}
 	runtime := &fakeRuntime{}
 	validate := validation.NewValidator()
-	h := handlers.New(storage, validate, runtime, nil, nil)
+	h := handlers.New(storage, validate, runtime, nil, nil, nil)
 
 	req := &bodyRequest{
 		MockRequest: createMockRequest("POST", "/api/v1/evaluations/jobs"),
@@ -483,7 +483,7 @@ func TestHandleCreateEvaluationRejectsMissingBenchmarks(t *testing.T) {
 	storage := &fakeStorage{}
 	runtime := &fakeRuntime{}
 	validate := validation.NewValidator()
-	h := handlers.New(storage, validate, runtime, nil, nil)
+	h := handlers.New(storage, validate, runtime, nil, nil, nil)
 
 	index := 1
 
@@ -518,7 +518,7 @@ func TestHandleCreateEvaluationRejectsMissingProviderID(t *testing.T) {
 	storage := &fakeStorage{}
 	runtime := &fakeRuntime{}
 	validate := validation.NewValidator()
-	h := handlers.New(storage, validate, runtime, nil, nil)
+	h := handlers.New(storage, validate, runtime, nil, nil, nil)
 
 	req := &bodyRequest{
 		MockRequest: createMockRequest("POST", "/api/v1/evaluations/jobs"),
@@ -553,7 +553,7 @@ func TestHandleCreateEvaluationRejectsInvalidProviderID(t *testing.T) {
 	storage := &fakeStorage{providerConfigs: providerConfigs}
 	runtime := &fakeRuntime{}
 	validate := validation.NewValidator()
-	h := handlers.New(storage, validate, runtime, nil, nil)
+	h := handlers.New(storage, validate, runtime, nil, nil, nil)
 	ctx := executioncontext.NewExecutionContext(context.Background(), "req-invalid-provider", logger, "test-user", "test-tenant")
 
 	req := &bodyRequest{
@@ -585,7 +585,7 @@ func TestHandleCreateEvaluationRejectsInvalidBenchmarkID(t *testing.T) {
 	storage := &fakeStorage{providerConfigs: providerConfigs}
 	runtime := &fakeRuntime{}
 	validate := validation.NewValidator()
-	h := handlers.New(storage, validate, runtime, nil, nil)
+	h := handlers.New(storage, validate, runtime, nil, nil, nil)
 	ctx := executioncontext.NewExecutionContext(context.Background(), "req-invalid-benchmark", logger, "test-user", "test-tenant")
 
 	req := &bodyRequest{
@@ -615,7 +615,7 @@ func TestHandleListEvaluations(t *testing.T) {
 	}
 	validate := validation.NewValidator()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	h := handlers.New(storage, validate, &fakeRuntime{}, nil, nil)
+	h := handlers.New(storage, validate, &fakeRuntime{}, nil, nil, nil)
 
 	req := &listEvaluationsRequest{
 		MockRequest: createMockRequest("GET", "/api/v1/evaluations/jobs"),
@@ -656,7 +656,7 @@ func TestHandleGetEvaluation(t *testing.T) {
 	}
 	validate := validation.NewValidator()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	h := handlers.New(storage, validate, &fakeRuntime{}, nil, nil)
+	h := handlers.New(storage, validate, &fakeRuntime{}, nil, nil, nil)
 
 	req := &deleteRequest{
 		MockRequest: createMockRequest("GET", "/api/v1/evaluations/jobs/job-get"),
@@ -684,7 +684,7 @@ func TestHandleGetEvaluation_MissingPathParam(t *testing.T) {
 	storage := &fakeStorage{}
 	validate := validation.NewValidator()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	h := handlers.New(storage, validate, &fakeRuntime{}, nil, nil)
+	h := handlers.New(storage, validate, &fakeRuntime{}, nil, nil, nil)
 
 	req := &deleteRequest{
 		MockRequest: createMockRequest("GET", "/api/v1/evaluations/jobs/"),
@@ -722,7 +722,7 @@ func TestHandleUpdateEvaluation(t *testing.T) {
 	}}
 	validate := validation.NewValidator()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	h := handlers.New(storage, validate, &fakeRuntime{}, nil, nil)
+	h := handlers.New(storage, validate, &fakeRuntime{}, nil, nil, nil)
 
 	body := `{"benchmark_status_event":{"provider_id":"p1","id":"b1","status":"completed"}}`
 	req := &bodyRequest{
@@ -758,7 +758,7 @@ func TestHandleUpdateEvaluationRejectsCancelledStatus(t *testing.T) {
 	storage := &fakeStorage{}
 	validate := testhelpers.NewValidator(t)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	h := handlers.New(storage, validate, &fakeRuntime{}, nil, nil)
+	h := handlers.New(storage, validate, &fakeRuntime{}, nil, nil, nil)
 
 	body := `{"benchmark_status_event":{"provider_id":"p1","id":"b1","status":"cancelled"}}`
 	req := &bodyRequest{
@@ -789,7 +789,7 @@ func TestHandleUpdateEvaluationAcceptsValidPhase(t *testing.T) {
 	storage := &updateEvaluationStorage{fakeStorage: &fakeStorage{}}
 	validate := testhelpers.NewValidator(t)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	h := handlers.New(storage, validate, &fakeRuntime{}, nil, nil)
+	h := handlers.New(storage, validate, &fakeRuntime{}, nil, nil, nil)
 
 	body := `{"benchmark_status_event":{"provider_id":"p1","id":"b1","status":"running","phase":"running_evaluation"}}`
 	req := &bodyRequest{
@@ -816,7 +816,7 @@ func TestHandleUpdateEvaluationStampsRuntimeMessageOrigins(t *testing.T) {
 	storage := &updateEvaluationStorage{fakeStorage: &fakeStorage{}}
 	validate := testhelpers.NewValidator(t)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	h := handlers.New(storage, validate, &fakeRuntime{}, nil, nil)
+	h := handlers.New(storage, validate, &fakeRuntime{}, nil, nil, nil)
 
 	body := `{"benchmark_status_event":{"provider_id":"p1","id":"b1","status":"failed","error_message":{"message":"adapter failed","message_code":"ADAPTER_FAIL"},"warning_message":{"message":"adapter warning","message_code":"ADAPTER_WARN"}}}`
 	req := &bodyRequest{
@@ -853,7 +853,7 @@ func TestHandleUpdateEvaluationRejectsInvalidPhase(t *testing.T) {
 	storage := &updateEvaluationStorage{fakeStorage: &fakeStorage{}}
 	validate := testhelpers.NewValidator(t)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	h := handlers.New(storage, validate, &fakeRuntime{}, nil, nil)
+	h := handlers.New(storage, validate, &fakeRuntime{}, nil, nil, nil)
 
 	body := `{"benchmark_status_event":{"provider_id":"p1","id":"b1","status":"running","phase":"invalid_phase"}}`
 	req := &bodyRequest{
@@ -875,7 +875,7 @@ func TestHandleUpdateEvaluationRejectsInvalidPhase(t *testing.T) {
 	}
 	respBody := recorder.Body.String()
 	if !strings.Contains(respBody, "request_validation_failed") {
-		t.Fatalf("expected request_validation_failed in body, got %q", respBody)
+		t.Fatalf("expected request_validation_failed in body, but got %q", respBody)
 	}
 }
 
@@ -894,7 +894,7 @@ func TestHandleCreateEvaluationRejectsExperimentWhenMLflowDisabled(t *testing.T)
 	storage := &fakeStorage{providerConfigs: providerConfigs}
 	runtime := &fakeRuntime{}
 	validate := testhelpers.NewValidator(t)
-	h := handlers.New(storage, validate, runtime, nil, nil)
+	h := handlers.New(storage, validate, runtime, nil, nil, nil)
 	ctx := executioncontext.NewExecutionContext(context.Background(), "req-mlflow-exp", logger, "test-user", "test-tenant")
 
 	req := &bodyRequest{
@@ -933,7 +933,7 @@ func TestHandleCreateEvaluationRejectsEmptyExperimentName(t *testing.T) {
 	storage := &fakeStorage{providerConfigs: providerConfigs}
 	runtime := &fakeRuntime{}
 	validate := testhelpers.NewValidator(t)
-	h := handlers.New(storage, validate, runtime, nil, nil)
+	h := handlers.New(storage, validate, runtime, nil, nil, nil)
 	ctx := executioncontext.NewExecutionContext(context.Background(), "req-empty-exp", logger, "test-user", "test-tenant")
 
 	req := &bodyRequest{
@@ -971,7 +971,7 @@ func TestHandleListEvaluations_WriteJSON_logsExtraArgs(t *testing.T) {
 		},
 	}
 	validate := testhelpers.NewValidator(t)
-	h := handlers.New(storage, validate, &fakeRuntime{}, nil, nil)
+	h := handlers.New(storage, validate, &fakeRuntime{}, nil, nil, nil)
 
 	req := &listEvaluationsRequest{
 		MockRequest: createMockRequest("GET", "/api/v1/evaluations/jobs"),
@@ -1021,7 +1021,7 @@ func TestHandleCreateEvaluationRejectsInvalidQueueName(t *testing.T) {
 	storage := &fakeStorage{}
 	runtime := &fakeRuntime{}
 	validate := testhelpers.NewValidator(t)
-	h := handlers.New(storage, validate, runtime, nil, nil)
+	h := handlers.New(storage, validate, runtime, nil, nil, nil)
 
 	invalidNames := []string{
 		"user-queue!@#$%",
@@ -1060,7 +1060,7 @@ func TestHandleCreateEvaluationRejectsInvalidHardwareProfileRef(t *testing.T) {
 	storage := &fakeStorage{}
 	runtime := &fakeRuntime{}
 	validate := testhelpers.NewValidator(t)
-	h := handlers.New(storage, validate, runtime, nil, nil)
+	h := handlers.New(storage, validate, runtime, nil, nil, nil)
 
 	invalidNames := []string{
 		"profile!@#$%",

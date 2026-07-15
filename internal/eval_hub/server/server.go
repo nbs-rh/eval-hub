@@ -12,6 +12,7 @@ import (
 	"github.com/eval-hub/eval-hub/internal/eval_hub/abstractions"
 	"github.com/eval-hub/eval-hub/internal/eval_hub/config"
 	"github.com/eval-hub/eval-hub/internal/eval_hub/constants"
+	"github.com/eval-hub/eval-hub/internal/eval_hub/evalcards"
 	"github.com/eval-hub/eval-hub/internal/eval_hub/executioncontext"
 	"github.com/eval-hub/eval-hub/internal/eval_hub/handlers"
 	"github.com/eval-hub/eval-hub/internal/eval_hub/http_wrappers"
@@ -26,14 +27,15 @@ import (
 )
 
 type Server struct {
-	httpServer    *http.Server
-	port          int
-	logger        *slog.Logger
-	serviceConfig *config.Config
-	storage       abstractions.Storage
-	validate      *validator.Validate
-	runtime       abstractions.Runtime
-	mlflowClient  *mlflowclient.Client
+	httpServer      *http.Server
+	port            int
+	logger          *slog.Logger
+	serviceConfig   *config.Config
+	storage         abstractions.Storage
+	validate        *validator.Validate
+	runtime         abstractions.Runtime
+	mlflowClient    *mlflowclient.Client
+	resultsExporter evalcards.ResultsExporter
 }
 
 func (s *Server) isOTELEnabled() bool {
@@ -82,14 +84,17 @@ func NewServer(logger *slog.Logger,
 		return nil, fmt.Errorf("validator is required for the server")
 	}
 
+	resultsExporter := evalcards.NewManager(logger, evalcards.ManagerConfig{MLFlowClient: mlflowClient})
+
 	return &Server{
-		port:          serviceConfig.Service.Port,
-		logger:        logger,
-		serviceConfig: serviceConfig,
-		storage:       storage,
-		validate:      validate,
-		runtime:       runtime,
-		mlflowClient:  mlflowClient,
+		port:            serviceConfig.Service.Port,
+		logger:          logger,
+		serviceConfig:   serviceConfig,
+		storage:         storage,
+		validate:        validate,
+		runtime:         runtime,
+		mlflowClient:    mlflowClient,
+		resultsExporter: resultsExporter,
 	}, nil
 }
 
@@ -430,7 +435,7 @@ func (s *Server) canContinueRequest(ctx *executioncontext.ExecutionContext, resp
 
 func (s *Server) setupRoutes() (http.Handler, error) {
 	router := http.NewServeMux()
-	h := handlers.New(s.storage, s.validate, s.runtime, s.mlflowClient, s.serviceConfig)
+	h := handlers.New(s.storage, s.validate, s.runtime, s.mlflowClient, s.serviceConfig, s.resultsExporter)
 
 	// Health
 	s.setupHealthRoutes(h, router)

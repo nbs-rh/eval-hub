@@ -371,7 +371,7 @@ func (s *sqlStorage) updateBenchmarkResults(job *api.EvaluationJobResource, runS
 
 // UpdateEvaluationJobWithRunStatus runs in a transaction: fetches the job, merges RunStatusInternal into the entity, and persists.
 func (s *sqlStorage) UpdateEvaluationJob(id string, runStatus *api.StatusEvent) error {
-	err := s.withTransaction("update evaluation job", id, func(txn *sql.Tx) error {
+	return s.withTransaction("update evaluation job", id, func(txn *sql.Tx) error {
 		s.logger.Info("Updating evaluation job", "id", id, "status", runStatus.BenchmarkStatusEvent.Status, "runStatus", runStatus)
 
 		job, err := s.getEvaluationJobTransactional(txn, id)
@@ -453,10 +453,12 @@ func (s *sqlStorage) UpdateEvaluationJob(id string, runStatus *api.StatusEvent) 
 			Results: job.Results,
 		}
 
-		return s.updateEvaluationJobTxn(txn, id, overallState, &entity)
-	})
+		if err := s.updateEvaluationJobTxn(txn, id, overallState, &entity); err != nil {
+			return err
+		}
 
-	return err
+		return nil
+	})
 }
 
 func (s *sqlStorage) computeJobTestResult(job *api.EvaluationJobResource, collection *api.CollectionResource) {
