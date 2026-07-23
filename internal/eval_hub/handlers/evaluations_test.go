@@ -209,23 +209,6 @@ func (s *updateEvaluationStorage) UpdateEvaluationJob(_ string, status *api.Stat
 	return s.updateErr
 }
 
-type deleteRequest struct {
-	*MockRequest
-	queryValues map[string][]string
-	pathValues  map[string]string
-}
-
-func (r *deleteRequest) Query(key string) []string {
-	if values, ok := r.queryValues[key]; ok {
-		return values
-	}
-	return []string{}
-}
-
-func (r *deleteRequest) PathValue(name string) string {
-	return r.pathValues[name]
-}
-
 func TestResolveProvider_FromMap(t *testing.T) {
 	providers := map[string]api.ProviderResource{
 		"p1": {Resource: api.Resource{ID: "p1"}},
@@ -846,6 +829,43 @@ func TestHandleUpdateEvaluationStampsRuntimeMessageOrigins(t *testing.T) {
 	}
 	if event.WarningMessage == nil || event.WarningMessage.MessageOrigin != api.MessageOriginRuntime {
 		t.Fatalf("expected runtime warning origin, got %+v", event.WarningMessage)
+	}
+}
+
+func TestHandleUpdateEvaluationPreservesProvidedMessageOrigins(t *testing.T) {
+	t.Parallel()
+	storage := &updateEvaluationStorage{fakeStorage: &fakeStorage{}}
+	validate := testhelpers.NewValidator(t)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	h := handlers.New(storage, validate, &fakeRuntime{}, nil, nil, nil)
+
+	body := `{"benchmark_status_event":{"provider_id":"p1","id":"b1","status":"failed","error_message":{"message":"adapter failed","message_code":"ADAPTER_FAIL","message_origin":"server"},"warning_message":{"message":"adapter warning","message_code":"ADAPTER_WARN","message_origin":"server"}}}`
+	req := &bodyRequest{
+		MockRequest: createMockRequest("POST", "/api/v1/evaluations/jobs/job-preserve-origin/events"),
+		body:        []byte(body),
+	}
+	reqWithPath := &updateEvaluationRequest{
+		bodyRequest: req,
+		pathValues:  map[string]string{"job_id": "job-preserve-origin"},
+	}
+	recorder := httptest.NewRecorder()
+	resp := MockResponseWrapper{recorder: recorder}
+	ctx := executioncontext.NewExecutionContext(context.Background(), "req-preserve-origin", logger, "test-user", "test-tenant")
+
+	h.HandleUpdateEvaluation(ctx, reqWithPath, resp)
+
+	if recorder.Code != 204 {
+		t.Fatalf("expected status 204, got %d body %s", recorder.Code, recorder.Body.String())
+	}
+	if storage.lastStatusEvent == nil || storage.lastStatusEvent.BenchmarkStatusEvent == nil {
+		t.Fatal("expected status event to be stored")
+	}
+	event := storage.lastStatusEvent.BenchmarkStatusEvent
+	if event.ErrorMessage == nil || event.ErrorMessage.MessageOrigin != api.MessageOriginServer {
+		t.Fatalf("expected server error origin to be preserved, got %+v", event.ErrorMessage)
+	}
+	if event.WarningMessage == nil || event.WarningMessage.MessageOrigin != api.MessageOriginServer {
+		t.Fatalf("expected server warning origin to be preserved, got %+v", event.WarningMessage)
 	}
 }
 

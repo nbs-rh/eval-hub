@@ -10,32 +10,6 @@ import (
 	"testing"
 )
 
-func TestHeadersForLog(t *testing.T) {
-	tests := []struct {
-		name   string
-		header string
-		want   string
-	}{
-		{"Bearer obfuscated", "Bearer secret-token", "Bearer ***"},
-		{"Basic obfuscated", "Basic dXNlcjpwYXNz", "Basic ***"},
-		{"Other auth obfuscated", "Digest xxx", "***"},
-		{"Empty auth", "", "Empty"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			h := http.Header{}
-			if tt.header != "" {
-				h.Set("Authorization", tt.header)
-			}
-			out := headersForLog(h)
-			got := out.Get("Authorization")
-			if got != tt.want {
-				t.Errorf("headersForLog() Authorization = %q, want %q", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestSetAuthHeader(t *testing.T) {
 	t.Run("no op when token empty", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -98,7 +72,7 @@ func TestNewReverseProxy(t *testing.T) {
 		}
 		w.Header().Set("X-Backend", "ok")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("ok"))
+		_, _ = w.Write([]byte("ok"))
 	}))
 	defer backend.Close()
 
@@ -127,6 +101,40 @@ func TestNewReverseProxy(t *testing.T) {
 	}
 }
 
+func TestNewReverseProxyRequestIDInLogs(t *testing.T) {
+	var logBuf strings.Builder
+	logger := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	var sawTxnHeader string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sawTxnHeader = r.Header.Get(globalTransactionIDHeader)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer backend.Close()
+
+	target, err := url.Parse(strings.TrimSuffix(backend.URL, "/"))
+	if err != nil {
+		t.Fatalf("url.Parse: %v", err)
+	}
+	proxy := NewReverseProxy(target, backend.Client(), logger, nil)
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	req.Header.Set(globalTransactionIDHeader, "proxy-req-id")
+	rw := httptest.NewRecorder()
+	proxy.ServeHTTP(rw, req)
+
+	if sawTxnHeader != "proxy-req-id" {
+		t.Fatalf("backend %s = %q, want proxy-req-id", globalTransactionIDHeader, sawTxnHeader)
+	}
+	logs := logBuf.String()
+	if !strings.Contains(logs, "request_id=proxy-req-id") {
+		t.Fatalf("logs = %q, want request_id field", logs)
+	}
+	if !strings.Contains(logs, "Proxying request") || !strings.Contains(logs, "Response from proxy") {
+		t.Fatalf("logs = %q, want proxy request and response lines", logs)
+	}
+}
+
 func TestNewReverseProxyWithPathPrefix(t *testing.T) {
 	logger := slog.Default()
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -134,7 +142,7 @@ func TestNewReverseProxyWithPathPrefix(t *testing.T) {
 			t.Errorf("backend path = %s, want /mlflow/api/2.0/mlflow/experiments/get-by-name", r.URL.Path)
 		}
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("ok"))
+		_, _ = w.Write([]byte("ok"))
 	}))
 	defer backend.Close()
 
