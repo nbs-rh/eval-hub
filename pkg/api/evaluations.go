@@ -2,9 +2,6 @@ package api
 
 import (
 	"fmt"
-	"log/slog"
-	"net/url"
-	"strings"
 	"time"
 )
 
@@ -130,214 +127,6 @@ func (e *BenchmarkStatusEvent) StampRuntimeMessageOrigins() {
 	DefaultMessageOrigin(e.WarningMessage, MessageOriginRuntime)
 }
 
-// SidecarURLTargets holds real upstream base URLs used to rewrite sidecar localhost
-// URLs in persisted status messages. Empty fields mean that target cannot be resolved
-// (fallback: strip scheme+host, keep path/query/fragment).
-type SidecarURLTargets struct {
-	EvalHub       string
-	MLFlow        string
-	OCI           string
-	OCIRepository string
-	Model         string
-}
-
-// RewriteSidecarURLsInMessages rewrites sidecar base URLs in error and warning messages
-// so persisted text shows the real upstream scheme+host instead of localhost.
-// When a target cannot be resolved, scheme+host are stripped and the path is kept.
-func (e *BenchmarkStatusEvent) RewriteSidecarURLsInMessages(sidecarBaseURL string, targets SidecarURLTargets, logger *slog.Logger) {
-	if e == nil {
-		return
-	}
-	rewriteMessageInfo(e.ErrorMessage, sidecarBaseURL, targets, logger)
-	rewriteMessageInfo(e.WarningMessage, sidecarBaseURL, targets, logger)
-}
-
-func rewriteMessageInfo(m *MessageInfo, sidecarBaseURL string, targets SidecarURLTargets, logger *slog.Logger) {
-	if m == nil || m.Message == "" {
-		return
-	}
-	originalMessage := m.Message
-	persistedMessage := RewriteSidecarURLsInMessage(originalMessage, sidecarBaseURL, targets)
-	if persistedMessage == originalMessage {
-		return
-	}
-	if logger != nil {
-		logger.Info("Rewrote sidecar URLs in status message for persistence",
-			"original_message", originalMessage,
-			"persisted_message", persistedMessage,
-		)
-	}
-	m.Message = persistedMessage
-}
-
-// RewriteSidecarURLsInMessage replaces scheme+host of sidecarBaseURL occurrences with
-// the real target resolved from the URL path (eval-hub, MLflow, OCI, or model).
-// Only URLs whose host exactly matches the sidecar base URL host are rewritten;
-// text and URLs that merely share a host prefix are left unchanged.
-// When no target is available, scheme+host are removed and path/query/fragment are kept.
-func RewriteSidecarURLsInMessage(message, sidecarBaseURL string, targets SidecarURLTargets) string {
-	base := strings.TrimRight(strings.TrimSpace(sidecarBaseURL), "/")
-	if message == "" || base == "" || !strings.Contains(message, base) {
-		return message
-	}
-	sidecarURL, err := url.Parse(base)
-	if err != nil || sidecarURL.Host == "" {
-		return message
-	}
-	sidecarHost := sidecarURL.Host
-
-	var b strings.Builder
-	remaining := message
-	for {
-		i := strings.Index(remaining, base)
-		if i < 0 {
-			b.WriteString(remaining)
-			break
-		}
-		b.WriteString(remaining[:i])
-		rest := remaining[i:]
-		end := strings.IndexAny(rest, " \t\n\r")
-		var urlStr string
-		if end < 0 {
-			urlStr = rest
-			remaining = ""
-		} else {
-			urlStr = rest[:end]
-			remaining = rest[end:]
-		}
-		b.WriteString(rewriteSidecarURL(urlStr, sidecarHost, targets))
-	}
-	return b.String()
-}
-
-func rewriteSidecarURL(urlStr, sidecarHost string, targets SidecarURLTargets) string {
-	u, err := url.Parse(urlStr)
-	if err != nil || u.Host == "" {
-		return urlStr
-	}
-	if u.Host != sidecarHost {
-		return urlStr
-	}
-	path := u.EscapedPath()
-	targetBase, ok := resolveSidecarURLTarget(path, targets)
-	if !ok {
-		return stripURLHost(u)
-	}
-	tu, err := url.Parse(targetBase)
-	if err != nil || tu.Host == "" {
-		return stripURLHost(u)
-	}
-	u.Scheme = tu.Scheme
-	u.Host = tu.Host
-	u.User = nil
-	return u.String()
-}
-
-func stripURLHost(u *url.URL) string {
-	out := u.EscapedPath()
-	if u.RawQuery != "" {
-		out += "?" + u.RawQuery
-	}
-	if u.Fragment != "" {
-		out += "#" + u.Fragment
-	}
-	if out == "" {
-		return "/"
-	}
-	return out
-}
-
-func resolveSidecarURLTarget(path string, targets SidecarURLTargets) (string, bool) {
-	switch {
-	case strings.HasPrefix(path, "/api/v1/evaluations/"):
-		if targets.EvalHub == "" {
-			return "", false
-		}
-		return targets.EvalHub, true
-	case isMLflowProxyPath(path):
-		if targets.MLFlow == "" {
-			return "", false
-		}
-		return targets.MLFlow, true
-	case ociPathMatchesRepository(path, targets.OCIRepository):
-		if targets.OCI == "" {
-			return "", false
-		}
-		return targets.OCI, true
-	default:
-		if targets.Model == "" {
-			return "", false
-		}
-		return targets.Model, true
-	}
-}
-
-// isMLflowProxyPath mirrors sidecar routing for MLflow REST roots.
-func isMLflowProxyPath(path string) bool {
-	const (
-		mlflowAPIv2PathPrefix          = "/api/2.0/mlflow"
-		mlflowAPIv3PathPrefix          = "/api/3.0/mlflow"
-		mlflowAPIv2ArtifactsPathPrefix = "/api/2.0/mlflow-artifacts"
-	)
-	return mlflowPathMatchesPrefix(path, mlflowAPIv2PathPrefix) ||
-		mlflowPathMatchesPrefix(path, mlflowAPIv3PathPrefix) ||
-		mlflowPathMatchesPrefix(path, mlflowAPIv2ArtifactsPathPrefix)
-}
-
-func mlflowPathMatchesPrefix(path, prefix string) bool {
-	return path == prefix || strings.HasPrefix(path, prefix+"/")
-}
-
-// ociPathMatchesRepository mirrors sidecar ociRouteMatch: repository segments must appear
-// at the start of the path or immediately after a "v2" segment.
-func ociPathMatchesRepository(path, repository string) bool {
-	repoParts := splitPathSegments(repository)
-	if len(repoParts) == 0 {
-		return false
-	}
-	pathParts := splitPathSegments(path)
-	if len(pathParts) < len(repoParts) {
-		return false
-	}
-	n := len(repoParts)
-	for i := 0; i+n <= len(pathParts); i++ {
-		if !pathSegmentsEqual(pathParts[i:i+n], repoParts) {
-			continue
-		}
-		if i == 0 || pathParts[i-1] == "v2" {
-			return true
-		}
-	}
-	return false
-}
-
-func splitPathSegments(p string) []string {
-	p = strings.Trim(p, "/")
-	if p == "" {
-		return nil
-	}
-	parts := strings.Split(p, "/")
-	out := make([]string, 0, len(parts))
-	for _, s := range parts {
-		if s != "" {
-			out = append(out, s)
-		}
-	}
-	return out
-}
-
-func pathSegmentsEqual(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
-}
-
 type PrimaryScore struct {
 	Metric        string `mapstructure:"metric" json:"metric" validate:"required"`
 	LowerIsBetter bool   `mapstructure:"lower_is_better" json:"lower_is_better,omitempty" validate:"omitempty,boolean"`
@@ -370,13 +159,41 @@ type TestDataRef struct {
 	PVC *PVCTestDataRef `mapstructure:"pvc" json:"pvc,omitempty"`
 }
 
-type HardwareProfileRef struct {
-	Name      string `mapstructure:"name" json:"name" validate:"required,rfc1123_dns_label"`
-	Namespace string `mapstructure:"namespace" json:"namespace,omitempty" validate:"omitempty,rfc1123_dns_label"`
+// HardwareResourceQuantity holds optional Kubernetes CPU or memory request/limit quantities.
+type HardwareResourceQuantity struct {
+	Request string `mapstructure:"request" json:"request,omitempty"`
+	Limit   string `mapstructure:"limit" json:"limit,omitempty"`
 }
 
+// HardwareGPUConfig holds optional GPU resource overrides for a benchmark.
+// Name is the Kubernetes extended resource (e.g. "nvidia.com/gpu").
+// Count is the number of GPUs requested on the Job (requests == limits).
+type HardwareGPUConfig struct {
+	Name  string `mapstructure:"name" json:"name,omitempty"`
+	Count int    `mapstructure:"count" json:"count,omitempty"`
+}
+
+// BenchmarkHardwareConfig is an optional per-benchmark hardware override for Kubernetes runtimes.
+//
+// Two mutually exclusive modes:
+//   - Profile mode: set HardwareProfileName to fetch an OpenDataHub HardwareProfile CR.
+//     Queue, CPU, Memory, and GPU must not be set.
+//   - Direct mode: omit HardwareProfileName and set Queue, CPU, Memory, and/or GPU directly.
+//     Values missing from direct fields fall back to the provider runtime.k8s configuration.
 type BenchmarkHardwareConfig struct {
-	HardwareProfileRef HardwareProfileRef `mapstructure:"hardware_profile_ref" json:"hardware_profile_ref,omitempty"`
+	HardwareProfileName string                    `mapstructure:"hardware_profile_name" json:"hardware_profile_name,omitempty" validate:"omitempty,rfc1123_dns_label"`
+	Queue               *QueueConfig              `mapstructure:"queue" json:"queue,omitempty"`
+	CPU                 *HardwareResourceQuantity `mapstructure:"cpu" json:"cpu,omitempty"`
+	Memory              *HardwareResourceQuantity `mapstructure:"memory" json:"memory,omitempty"`
+	GPU                 *HardwareGPUConfig        `mapstructure:"gpu" json:"gpu,omitempty"`
+}
+
+// HasDirectFields reports whether any inline (non-profile) hardware fields are set.
+func (h *BenchmarkHardwareConfig) HasDirectFields() bool {
+	if h == nil {
+		return false
+	}
+	return h.Queue != nil || h.CPU != nil || h.Memory != nil || h.GPU != nil
 }
 
 // EvaluationBenchmarkConfig represents a benchmark reference in an evaluation job request or persisted job config.
@@ -509,8 +326,14 @@ type CollectionRef struct {
 	Benchmarks []EvaluationBenchmarkConfig `json:"benchmarks,omitempty" validate:"omitempty,dive"`
 }
 
-// QueueConfig represents an optional scheduling queue for evaluation jobs.
+// QueueConfig represents an optional scheduling queue under hardware_config
+// (or the deprecated evaluation.queue field).
 // When Kind is empty, the evaluation job API handler normalizes it to "kueue" before persist/runtime.
+// Precedence at job scheduling time (highest first):
+//  1. Queue-backed HardwareProfile referenced by benchmark.hardware_config.hardware_profile_name
+//  2. benchmark.hardware_config.queue (direct mode)
+//  3. evaluation.hardware_config (fallback when a benchmark has no hardware_config)
+//  4. evaluation.queue (deprecated)
 type QueueConfig struct {
 	Kind string `json:"kind,omitempty" validate:"omitempty,oneof=kueue"`
 	Name string `json:"name" validate:"required,rfc1123_dns_label"`
@@ -518,17 +341,32 @@ type QueueConfig struct {
 
 // EvaluationJobConfig represents evaluation job request schema
 type EvaluationJobConfig struct {
-	Name         string                      `json:"name" validate:"required"`
-	Description  *string                     `json:"description,omitempty"`
-	Tags         []string                    `json:"tags,omitempty" validate:"omitempty,dive,tagname"`
-	Model        ModelRef                    `json:"model" validate:"required"`
-	PassCriteria *PassCriteria               `json:"pass_criteria,omitempty"`
-	Benchmarks   []EvaluationBenchmarkConfig `json:"benchmarks,omitempty" validate:"omitempty,required_without=Collection,dive"`
-	Collection   *CollectionRef              `json:"collection,omitempty" validate:"omitempty,required_without=Benchmarks"`
-	Experiment   *ExperimentConfig           `json:"experiment,omitempty"`
-	Custom       *map[string]any             `json:"custom,omitempty"`
-	Exports      *EvaluationExports          `json:"exports,omitempty"`
-	Queue        *QueueConfig                `json:"queue,omitempty"`
+	Name           string                      `json:"name" validate:"required"`
+	Description    *string                     `json:"description,omitempty"`
+	Tags           []string                    `json:"tags,omitempty" validate:"omitempty,dive,tagname"`
+	Model          ModelRef                    `json:"model" validate:"required"`
+	PassCriteria   *PassCriteria               `json:"pass_criteria,omitempty"`
+	Benchmarks     []EvaluationBenchmarkConfig `json:"benchmarks,omitempty" validate:"omitempty,required_without=Collection,dive"`
+	Collection     *CollectionRef              `json:"collection,omitempty" validate:"omitempty,required_without=Benchmarks"`
+	Experiment     *ExperimentConfig           `json:"experiment,omitempty"`
+	Custom         *map[string]any             `json:"custom,omitempty"`
+	Exports        *EvaluationExports          `json:"exports,omitempty"`
+	HardwareConfig *BenchmarkHardwareConfig    `json:"hardware_config,omitempty"`
+	// Queue is deprecated. Prefer benchmark.hardware_config or evaluation.hardware_config.
+	// Used only when neither hardware_config is set. Will be removed in a future release.
+	Queue *QueueConfig `json:"queue,omitempty"`
+}
+
+// EffectiveHardwareConfig returns the per-benchmark hardware_config when set,
+// otherwise the evaluation-level hardware_config fallback.
+func EffectiveHardwareConfig(benchmark *EvaluationBenchmarkConfig, evaluation *EvaluationJobConfig) *BenchmarkHardwareConfig {
+	if benchmark != nil && benchmark.HardwareConfig != nil {
+		return benchmark.HardwareConfig
+	}
+	if evaluation != nil {
+		return evaluation.HardwareConfig
+	}
+	return nil
 }
 
 type EvaluationResource struct {
