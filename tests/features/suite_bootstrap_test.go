@@ -301,7 +301,7 @@ func (a *apiFeature) setupMCPServer(logger *slog.Logger) error {
 	a.mcpServerSession = serverSession
 
 	// Connect client
-	mcpClient := mcp.NewClient(&mcp.Implementation{Name: "fvt-test-client", Version: "1.0.0"}, nil)
+	mcpClient := mcp.NewClient(&mcp.Implementation{Name: "fvt-test-client", Version: "1.0.X"}, nil) // this is just a test so it can be anything
 	clientSession, err := mcpClient.Connect(ctx, clientTransport, nil)
 	if err != nil {
 		return fmt.Errorf("failed to connect MCP client: %w", err)
@@ -596,4 +596,7 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 
 	// Hardware profile steps (Kubernetes client-go via KUBECONFIG-first FVT helper)
 	InitializeHardwareProfileSteps(ctx, tc)
+
+	// Kubernetes lifecycle signal steps (event emission and evaluation-phase label)
+	InitializeLifecycleSignalSteps(ctx, tc)
 }

@@ -252,7 +252,13 @@ mlflow.log
 !.claude/skills/golang-version-update/
 .claude/skills/golang-version-update/*
 !.claude/skills/golang-version-update/SKILL.md
+!.claude/skills/release-notes/
+.claude/skills/release-notes/*
+!.claude/skills/release-notes/SKILL.md
+!.claude/skills/release-notes/template.md
 
 .agentready/
 
 tests/mcp/vscode/test-scripts/reports/
+
+internal/eval_runtime_sidecar/handlers/testdata/fuzz/
