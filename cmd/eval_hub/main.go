@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"io"
 	"log"
 	"log/slog"
 
@@ -25,7 +26,7 @@ import (
 
 var (
 	// Version can be set during the compilation
-	Version string = "1.0.0"
+	Version string = "1.0.1"
 	// Build is set during the compilation
 	Build string
 	// BuildDate is set during the compilation
@@ -256,5 +257,12 @@ func main() {
 	} else {
 		logger.Info("API Server shutdown gracefully")
 		_ = logShutdown() // ignore the error
+	}
+
+	// stop Kubernetes EventBroadcaster goroutines started by the runtime (cluster mode only)
+	if closer, ok := runtime.(io.Closer); ok {
+		if err := closer.Close(); err != nil {
+			logger.Error("Failed to close runtime", "error", err.Error())
+		}
 	}
 }
