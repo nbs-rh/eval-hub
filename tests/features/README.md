@@ -85,7 +85,7 @@ When running in local server mode, the tests will:
 | `@gpu` | GPU resource management scenarios in `gpu_resources.feature`; requires a cluster with GPU test setup (see `GPU_TESTING.md`) |
 | `@kueue` | Scenarios that require Kueue queue integration (`evaluation_jobs.feature`, `gpu_resources.feature`) |
 | `@negative` | Used to mark this as a negative test |
-| `@mlflow` | Tests that only work when running with a configured mlflow service |
+| `@mlflow` | Tests that only work when running with a configured mlflow service (`MLFLOW_TRACKING_URI`); includes API assertions and FVT steps that call the MLflow API. |
 | `@slow` | Tests that take more than the normal timeout (currently 1 hour) |
 | `@ignore` | Can be used to ignore a test |
 | `@connected` | Used by the Jenkins jobs and set when running on a connected cluster |
@@ -93,7 +93,7 @@ When running in local server mode, the tests will:
 | `@hardware_profile` | Hardware profile API and Kubernetes Job adapter resource tests in `evaluation_jobs.feature`; require pipeline env vars (see below). |
 | `@metrics` | Prometheus `/metrics` scrape tests in `metrics.feature`; in cluster/remote mode require `METRICS_URL` (see below). |
 | `@logs` | Evaluation job log collection scenarios in `evaluation_local_jobs.feature` and `evaluation_jobs.feature` |
-| `@pvc` | Evaluation jobs that mount offline test data from a PersistentVolumeClaim (`evaluation_jobs.feature`). Defaults: claim `evalhub-offline-test-data`, `sub_path` `staging`. Override with `TEST_DATA_PVC_CLAIM_NAME` / `TEST_DATA_PVC_SUB_PATH`. Missing-PVC negative case uses `TEST_DATA_PVC_MISSING_CLAIM_NAME` (default `evalhub-offline-test-data-does-not-exist`) and waits up to 2m30s for operator failure sync. Opt in with `GODOG_TAGS="@pvc"`. |
+| `@pvc` | Evaluation jobs that mount offline test data from a PersistentVolumeClaim (`evaluation_jobs.feature`). Defaults: claim `evalhub-offline-test-data`, `sub_path` `staging`. Override with `TEST_DATA_PVC_CLAIM_NAME` / `TEST_DATA_PVC_SUB_PATH`. Missing-PVC negative case uses `TEST_DATA_PVC_MISSING_CLAIM_NAME` (default `evalhub-offline-test-data-does-not-exist`) and waits up to 5m for operator failure sync. Opt in with `GODOG_TAGS="@pvc"`. |
 | `@gha-wheel-sanity` | Local-runtime wheel validation scenario run by `scripts/gha_wheel_sanity_test.sh` during GHA wheel checks |
 
 ### Metrics tests (`@metrics`)
