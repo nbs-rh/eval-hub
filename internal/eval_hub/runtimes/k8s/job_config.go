@@ -72,6 +72,7 @@ type jobConfig struct {
 	sidecarResources           corev1.ResourceRequirements
 	testDataS3                 s3TestDataConfig
 	testDataPVC                pvcTestDataConfig
+	testDataGit                gitTestDataConfig
 	testDataInitImage          string
 	sidecarConfig              *config.SidecarConfig
 	// queueKind and queueName come from a queue-backed HardwareProfile when set,
@@ -92,6 +93,13 @@ type pvcTestDataConfig struct {
 	subPath   string
 }
 
+type gitTestDataConfig struct {
+	url       string
+	ref       string
+	subPath   string
+	secretRef string
+}
+
 func buildJobConfig(evaluation *api.EvaluationJobResource, provider *api.ProviderResource, benchmarkConfig *api.EvaluationBenchmarkConfig, benchmarkIndex int, serviceConfig *config.Config, hardwareProfile *hardwareProfileResources) (*jobConfig, error) {
 	runtime := provider.Runtime
 	if runtime == nil || runtime.K8s == nil {
@@ -110,22 +118,10 @@ func buildJobConfig(evaluation *api.EvaluationJobResource, provider *api.Provide
 		return nil, fmt.Errorf("model url and name are required")
 	}
 
-	port := defaultSidecarPort
-	sidecarBaseURL := ""
+	sidecarBaseURL := config.DefaultSidecarBaseURL
 	if serviceConfig != nil && serviceConfig.Sidecar != nil {
-		if serviceConfig.Sidecar.Port != 0 {
-			p, err := sidecarPortFromInt(serviceConfig.Sidecar.Port)
-			if err != nil {
-				return nil, fmt.Errorf("sidecar port: %w", err)
-			}
-			port = p
-		}
-		sidecarBaseURL = strings.TrimSpace(serviceConfig.Sidecar.BaseURL)
+		sidecarBaseURL = serviceConfig.Sidecar.EffectiveBaseURL()
 	}
-	if sidecarBaseURL == "" {
-		sidecarBaseURL = fmt.Sprintf("http://localhost:%d", port)
-	}
-
 	namespace := resolveNamespace(string(evaluation.Resource.Tenant))
 	spec, err := shared.BuildJobSpec(evaluation, provider.Resource.ID, benchmarkConfig, benchmarkIndex, &sidecarBaseURL)
 	if err != nil {
@@ -207,6 +203,14 @@ func buildJobConfig(evaluation *api.EvaluationJobResource, provider *api.Provide
 		testDataPVCSubPath = strings.TrimSpace(benchmarkConfig.TestDataRef.PVC.SubPath)
 	}
 
+	var testDataGitURL, testDataGitRef, testDataGitSubPath, testDataGitSecretRef string
+	if benchmarkConfig.TestDataRef != nil && benchmarkConfig.TestDataRef.Git != nil {
+		testDataGitURL = strings.TrimSpace(benchmarkConfig.TestDataRef.Git.URL)
+		testDataGitRef = strings.TrimSpace(benchmarkConfig.TestDataRef.Git.Ref)
+		testDataGitSubPath = strings.TrimSpace(benchmarkConfig.TestDataRef.Git.SubPath)
+		testDataGitSecretRef = strings.TrimSpace(benchmarkConfig.TestDataRef.Git.SecretRef)
+	}
+
 	// GPU resource requests/limits are always propagated to the pod spec so that Kueue can
 	// account for GPU quota. Provider nodeSelector is the default; a HardwareProfile with
 	// Node scheduling overrides it, and a Queue-backed profile (or hardware_config.queue /
@@ -259,6 +263,12 @@ func buildJobConfig(evaluation *api.EvaluationJobResource, provider *api.Provide
 		testDataPVC: pvcTestDataConfig{
 			claimName: testDataPVCClaimName,
 			subPath:   testDataPVCSubPath,
+		},
+		testDataGit: gitTestDataConfig{
+			url:       testDataGitURL,
+			ref:       testDataGitRef,
+			subPath:   testDataGitSubPath,
+			secretRef: testDataGitSecretRef,
 		},
 	}
 	applyHardwareProfileResources(out, hardwareProfile)

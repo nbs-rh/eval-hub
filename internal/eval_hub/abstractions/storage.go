@@ -74,6 +74,9 @@ type Storage interface {
 	UpdateEvaluationJob(id string, runStatus *api.StatusEvent) error
 	// UpdateEvaluationJobStatus is used to update the status of an evaluation job and is internal - do we need it here?
 	UpdateEvaluationJobStatus(id string, state api.OverallState, message *api.MessageInfo) error
+	// UpdateEvaluationJobResolvedSHA records the resolved test-data identity (e.g. git commit SHA)
+	// on the benchmark at benchmarkIndex as TestDataRef.ResolvedSHA. Idempotent: if already set, no-op.
+	UpdateEvaluationJobResolvedSHA(id string, benchmarkIndex int, sha string) error
 
 	// Collection operations
 	CreateCollection(collection *api.CollectionResource) error
@@ -93,6 +96,8 @@ type Storage interface {
 
 	// LoadSystemResources reloads system-owned providers and collections into
 	// the database. Existing system resources are deleted and replaced.
+	// CreatedAt is preserved for existing IDs; UpdatedAt is preserved only when
+	// the serialized config is unchanged.
 	LoadSystemResources(systemCollections map[string]api.CollectionResource, systemProviders map[string]api.ProviderResource) error
 
 	// Close the storage connection

@@ -67,6 +67,7 @@ func (f *fakeStorage) UpdateEvaluationJobStatus(_ string, _ api.OverallState, _ 
 	f.called = true
 	return nil
 }
+func (f *fakeStorage) UpdateEvaluationJobResolvedSHA(_ string, _ int, _ string) error { return nil }
 func (f *fakeStorage) CreateCollection(_ *api.CollectionResource) error {
 	return nil
 }
@@ -2028,7 +2029,7 @@ func TestModelAuthCombinations(t *testing.T) {
 			// model-auth (raw real secret) is mounted only in the sidecar; the adapter gets the
 			// synthetic model-auth-internal (ref tokens + optional passthrough) instead.
 			for _, m := range adapterContainer.VolumeMounts {
-				if m.Name == evalhubSATokenVolumeName {
+				if m.Name == evalhubSAVolumeName {
 					t.Errorf("adapter must never have the SA token volume mounted (name %q)", m.Name)
 				}
 				if m.Name == modelAuthVolumeName {
@@ -2050,7 +2051,7 @@ func TestModelAuthCombinations(t *testing.T) {
 			}
 			var sidecarHasSAToken bool
 			for _, m := range sidecarContainer.VolumeMounts {
-				if m.Name == evalhubSATokenVolumeName {
+				if m.Name == evalhubSAVolumeName {
 					sidecarHasSAToken = true
 				}
 			}

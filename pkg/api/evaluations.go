@@ -73,7 +73,7 @@ func GetOverallState(s string) (OverallState, error) {
 
 // ModelRef represents model specification for evaluation requests
 type ModelRef struct {
-	URL        string         `json:"url" validate:"required"`
+	URL        string         `json:"url" validate:"omitempty,url"` // required if not all benchmarks have pre_recorded_data
 	Name       string         `json:"name" validate:"required"`
 	Auth       *ModelAuth     `json:"auth,omitempty"`
 	Parameters map[string]any `json:"parameters,omitempty"`
@@ -152,11 +152,32 @@ type PVCTestDataRef struct {
 	SubPath   string `json:"sub_path,omitempty" mapstructure:"sub_path,omitempty"`
 }
 
+// GitTestDataRef represents a git repository source for test data.
+// The repository is cloned and checked out at Ref into /test_data before the adapter runs.
+// Only HTTP(S) URLs are supported; SSH URLs (git@host:...) are rejected by validation.
+// When SecretRef is set the URL must use https so credentials are not sent in the clear.
+// Private, loopback, link-local, and cluster-local hosts are rejected (SSRF protection).
+type GitTestDataRef struct {
+	URL       string `json:"url" mapstructure:"url" validate:"required,http_url,git_clone_url"`
+	Ref       string `json:"ref" mapstructure:"ref" validate:"required"`
+	SubPath   string `json:"sub_path,omitempty" mapstructure:"sub_path,omitempty"`
+	SecretRef string `json:"secret_ref,omitempty" mapstructure:"secret_ref,omitempty" validate:"omitempty,rfc1123_dns_label"`
+}
+
 // TestDataRef represents external test data sources.
-// Exactly one of s3 or pvc must be set.
+// Exactly one of s3, pvc, or git must be set.
 type TestDataRef struct {
-	S3  *S3TestDataRef  `mapstructure:"s3" json:"s3,omitempty"`
-	PVC *PVCTestDataRef `mapstructure:"pvc" json:"pvc,omitempty"`
+	S3  *S3TestDataRef  `mapstructure:"s3" json:"s3,omitempty" validate:"required_without_all=PVC Git,excluded_with=PVC Git"`
+	PVC *PVCTestDataRef `mapstructure:"pvc" json:"pvc,omitempty" validate:"required_without_all=S3 Git,excluded_with=S3 Git"`
+	Git *GitTestDataRef `mapstructure:"git" json:"git,omitempty" validate:"required_without_all=S3 PVC,excluded_with=S3 PVC"`
+	// Type is the type of test data source.
+	// - data_set: a data set from a data set provider or user-provided data set
+	// - pre_recorded_data: pre-recorded data from a model
+	// If Type is not set, it defaults to data_set.
+	Type string `mapstructure:"type" json:"type,omitempty" validate:"omitempty,oneof=data_set pre_recorded_data"`
+	// ResolvedSHA is the resolved content identity for the test data source (e.g. git commit
+	// SHA). Populated by eval-hub after the init container resolves the ref; not accepted on input.
+	ResolvedSHA string `json:"resolved_sha,omitempty" mapstructure:"resolved_sha,omitempty"`
 }
 
 // HardwareResourceQuantity holds optional Kubernetes CPU or memory request/limit quantities.
@@ -245,6 +266,15 @@ type BenchmarkStatus struct {
 	CompletedAt    DateTime     `json:"completed_at,omitempty" validate:"omitempty,datetime=2006-01-02T15:04:05Z07:00"`
 }
 
+// JobMeta carries job-level metadata on status events that is not part of benchmark state.
+// The sidecar injects ResolvedSHA for git-source jobs; adapters must not set it.
+type JobMeta struct {
+	// ResolvedSHA is the resolved content identity for the job's test data (e.g. git commit SHA).
+	// Retried on each status event until loaded from .git-metadata, then injected on every
+	// subsequent event. The server skips the update if already persisted on the job.
+	ResolvedSHA string `json:"resolved_sha,omitempty"`
+}
+
 // BenchmarkStatusEvent is used when the job runtime needs to update the status of a benchmark
 type BenchmarkStatusEvent struct {
 	ProviderID     string         `json:"provider_id" validate:"required"`
@@ -261,6 +291,7 @@ type BenchmarkStatusEvent struct {
 	CompletedAt    DateTime       `json:"completed_at,omitempty" validate:"omitempty,datetime=2006-01-02T15:04:05Z07:00"`
 	MLFlowRunID    string         `json:"mlflow_run_id,omitempty"`
 	LogsPath       string         `json:"logs_path,omitempty"`
+	JobMeta        *JobMeta       `json:"job_meta,omitempty"`
 }
 
 type EvaluationJobState struct {
@@ -268,6 +299,9 @@ type EvaluationJobState struct {
 	Message *MessageInfo `json:"message" validate:"required"`
 }
 
+// StatusEvent is the body of POST /api/v1/evaluations/jobs/{id}/events.
+// BenchmarkStatusEvent must be set. For git-source jobs the sidecar injects
+// JobMeta.ResolvedSHA; adapters must not set it.
 type StatusEvent struct {
 	BenchmarkStatusEvent *BenchmarkStatusEvent `json:"benchmark_status_event" validate:"required"`
 }
@@ -344,7 +378,7 @@ type EvaluationJobConfig struct {
 	Name           string                      `json:"name" validate:"required"`
 	Description    *string                     `json:"description,omitempty"`
 	Tags           []string                    `json:"tags,omitempty" validate:"omitempty,dive,tagname"`
-	Model          *ModelRef                   `json:"model,omitempty"`
+	Model          *ModelRef                   `json:"model" validate:"required"`
 	PassCriteria   *PassCriteria               `json:"pass_criteria,omitempty"`
 	Benchmarks     []EvaluationBenchmarkConfig `json:"benchmarks,omitempty" validate:"omitempty,required_without=Collection,dive"`
 	Collection     *CollectionRef              `json:"collection,omitempty" validate:"omitempty,required_without=Benchmarks"`

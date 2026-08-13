@@ -18,9 +18,7 @@ func sidecarForJobPod(cfg *config.Config, jc *jobConfig) (*config.SidecarConfig,
 	} else {
 		export = &config.SidecarConfig{}
 	}
-	if export.Port == 0 {
-		export.Port = int(defaultSidecarPort)
-	}
+	export.BaseURL = export.EffectiveBaseURL()
 
 	if jc != nil {
 		if jc.evalHubURL != "" {
@@ -33,12 +31,15 @@ func sidecarForJobPod(cfg *config.Config, jc *jobConfig) (*config.SidecarConfig,
 				export.EvalHub.InsecureSkipVerify = false
 			}
 		}
+		if hasGitTestData(jc) {
+			export.InitContainer = &config.InitContainerConfig{IsGitJob: true}
+		}
 		if jc.mlflowTrackingURI != "" {
 			if export.MLFlow == nil {
 				export.MLFlow = &config.SidecarMLFlowConfig{}
 			}
 			export.MLFlow.TrackingURI = jc.mlflowTrackingURI
-			export.MLFlow.TokenPath = mlflowTokenMountPath + "/" + mlflowTokenFile
+			export.MLFlow.TokenPath = mlflowAuthMountPath + "/" + mlflowTokenFile
 			export.MLFlow.Workspace = jc.mlflowWorkspace
 			if cfg != nil && cfg.MLFlow != nil {
 				export.MLFlow.HTTPTimeout = cfg.MLFlow.HTTPTimeout
@@ -85,7 +86,7 @@ func cloneSidecarConfig(sc *config.SidecarConfig) *config.SidecarConfig {
 	if sc == nil {
 		return nil
 	}
-	out := &config.SidecarConfig{Port: sc.Port, BaseURL: sc.BaseURL}
+	out := &config.SidecarConfig{LocalMode: sc.LocalMode, BaseURL: sc.BaseURL, Port: sc.Port}
 	if sc.EvalHub != nil {
 		eh := *sc.EvalHub
 		out.EvalHub = &eh
@@ -101,6 +102,10 @@ func cloneSidecarConfig(sc *config.SidecarConfig) *config.SidecarConfig {
 	if sc.Model != nil {
 		m := *sc.Model
 		out.Model = &m
+	}
+	if sc.InitContainer != nil {
+		ic := *sc.InitContainer
+		out.InitContainer = &ic
 	}
 	if sc.OTEL != nil {
 		o := *sc.OTEL
