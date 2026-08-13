@@ -152,6 +152,42 @@ func benchmarksWithHardwareConfigFallback(benchmarks []api.EvaluationBenchmarkCo
 	return out
 }
 
+func allBenchmarksHavePreRecordedData(benchmarks []api.EvaluationBenchmarkConfig) bool {
+	if len(benchmarks) == 0 {
+		return false
+	}
+	for _, benchmark := range benchmarks {
+		if benchmark.TestDataRef == nil || benchmark.TestDataRef.Type != "pre_recorded_data" {
+			return false
+		}
+	}
+	return true
+}
+
+// ValidateReadOnlyResolvedSHA returns an error if resolved_sha is set on any benchmark in the request.
+// resolved_sha is server-populated after the init container resolves the ref and must not be accepted on create.
+func ValidateReadOnlyResolvedSHA(cfg *api.EvaluationJobConfig) error {
+	if cfg == nil {
+		return nil
+	}
+	checkBenchmarks := func(benchmarks []api.EvaluationBenchmarkConfig) error {
+		for i := range benchmarks {
+			b := &benchmarks[i]
+			if b.TestDataRef != nil && b.TestDataRef.ResolvedSHA != "" {
+				return serviceerrors.NewServiceError(messages.ResolvedSHAReadOnly)
+			}
+		}
+		return nil
+	}
+	if err := checkBenchmarks(cfg.Benchmarks); err != nil {
+		return err
+	}
+	if cfg.Collection != nil {
+		return checkBenchmarks(cfg.Collection.Benchmarks)
+	}
+	return nil
+}
+
 // HandleCreateEvaluation handles POST /api/v1/evaluations/jobs
 func (h *Handlers) HandleCreateEvaluation(ctx *executioncontext.ExecutionContext, req http_wrappers.RequestWrapper, w http_wrappers.ResponseWrapper) {
 	storage := h.getStorage(ctx)
@@ -190,13 +226,23 @@ func (h *Handlers) HandleCreateEvaluation(ctx *executioncontext.ExecutionContext
 			if err != nil {
 				return err
 			}
+			if err := ValidateReadOnlyResolvedSHA(evaluation); err != nil {
+				return err
+			}
 			if err := h.validateBenchmarkReferences(ctx, benchmarks); err != nil {
 				return err
 			}
 			if h.runtime != nil {
-				return h.runtime.WithLogger(ctx.Logger).WithContext(runtimeCtx).ValidateHardwareProfiles(
+				if err := h.runtime.WithLogger(ctx.Logger).WithContext(runtimeCtx).ValidateHardwareProfiles(
 					benchmarksWithHardwareConfigFallback(benchmarks, evaluation.HardwareConfig),
-				)
+				); err != nil {
+					return err
+				}
+			}
+			if (evaluation.Model != nil) &&
+				(strings.TrimSpace(evaluation.Model.URL) == "") &&
+				!allBenchmarksHavePreRecordedData(benchmarks) {
+				return serviceerrors.NewServiceError(messages.ModelURLRequired)
 			}
 			return nil
 		},
@@ -550,10 +596,29 @@ func (h *Handlers) HandleUpdateEvaluation(ctx *executioncontext.ExecutionContext
 				h.rewriteSidecarURLsInBenchmarkStatus(status.BenchmarkStatusEvent, job, ctx.Logger)
 			}
 
+			// Extract and clear JobMeta before passing the event to UpdateEvaluationJob.
+			// SHA persistence must happen only after validateBenchmarkExists (inside UpdateEvaluationJob)
+			// confirms the benchmark belongs to this job — otherwise a forged SHA on an event with a
+			// wrong provider_id/id would persist even though the status update is then rejected.
+			var resolvedSHA string
+			if status.BenchmarkStatusEvent != nil && status.BenchmarkStatusEvent.JobMeta != nil {
+				resolvedSHA = status.BenchmarkStatusEvent.JobMeta.ResolvedSHA
+				status.BenchmarkStatusEvent.JobMeta = nil // metadata, not benchmark state
+			}
+
 			err = scoped.UpdateEvaluationJob(evaluationJobID, status)
 			if err != nil {
 				w.Error(err, ctx.RequestID)
 				return err
+			}
+
+			// Persist resolved SHA only after benchmark membership was validated.
+			// Best-effort: a failure is logged but does not abort; the sidecar retries on every event.
+			if resolvedSHA != "" {
+				ctx.Logger.Debug("Persisting resolved SHA from status event", "id", evaluationJobID, "sha", resolvedSHA)
+				if err := scoped.UpdateEvaluationJobResolvedSHA(evaluationJobID, status.BenchmarkStatusEvent.BenchmarkIndex, resolvedSHA); err != nil {
+					ctx.Logger.Error("Failed to persist resolved SHA", "id", evaluationJobID, "error", err)
+				}
 			}
 
 			if h.runtime != nil && status.BenchmarkStatusEvent != nil && job != nil {

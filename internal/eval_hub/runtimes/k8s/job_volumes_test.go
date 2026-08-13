@@ -3,8 +3,45 @@ package k8s
 import (
 	"testing"
 
+	"github.com/eval-hub/eval-hub/internal/eval_hub/config"
 	"github.com/eval-hub/eval-hub/pkg/api"
 )
+
+func TestBuildJobSidecarMountsMLFlowToken(t *testing.T) {
+	cfg := &jobConfig{
+		jobID:             "job-mlflow-token",
+		resourceGUID:      "guid-mlflow",
+		benchmarkIndex:    0,
+		namespace:         "default",
+		providerID:        "provider-1",
+		benchmarkID:       "bench-1",
+		adapterImage:      "adapter:latest",
+		defaultEnv:        []api.EnvVar{},
+		mlflowTrackingURI: "http://mlflow:5000",
+	}
+	job, err := buildJob(cfg)
+	if err != nil {
+		t.Fatalf("buildJob: %v", err)
+	}
+	foundVol := findVolume(job.Spec.Template.Spec.Volumes, mlflowTokenVolumeName)
+	if foundVol == nil {
+		t.Fatalf("expected volume %q", mlflowTokenVolumeName)
+	}
+	sidecar := findContainer(job.Spec.Template.Spec.InitContainers, sidecarContainerName)
+	if sidecar == nil {
+		t.Fatal("expected sidecar init container")
+	}
+	foundMount := findVolumeMount(sidecar.VolumeMounts, mlflowTokenVolumeName)
+	if foundMount == nil {
+		t.Fatalf("expected sidecar mount %q", mlflowTokenVolumeName)
+	}
+	if foundMount.MountPath != mlflowAuthMountPath {
+		t.Fatalf("MountPath = %q, want %q", foundMount.MountPath, mlflowAuthMountPath)
+	}
+	if !foundMount.ReadOnly {
+		t.Fatal("expected read-only mlflow token mount")
+	}
+}
 
 func TestBuildJobWithOCICredentials(t *testing.T) {
 	cfg := &jobConfig{
@@ -42,11 +79,11 @@ func TestBuildJobWithOCICredentials(t *testing.T) {
 	if foundMount == nil {
 		t.Fatalf("expected volume mount %s to be present", ociCredentialsVolumeName)
 	}
-	if foundMount.MountPath != ociCredentialsMountPath {
-		t.Fatalf("expected mount path %q, got %q", ociCredentialsMountPath, foundMount.MountPath)
+	if foundMount.MountPath != ociAuthMountPath {
+		t.Fatalf("expected mount path %q, got %q", ociAuthMountPath, foundMount.MountPath)
 	}
-	if foundMount.SubPath != ociCredentialsSubPath {
-		t.Fatalf("expected sub path %q, got %q", ociCredentialsSubPath, foundMount.SubPath)
+	if foundMount.SubPath != ociDockerConfigSubPath {
+		t.Fatalf("expected sub path %q, got %q", ociDockerConfigSubPath, foundMount.SubPath)
 	}
 	if !foundMount.ReadOnly {
 		t.Fatalf("expected mount to be read-only")
@@ -57,8 +94,8 @@ func TestBuildJobWithOCICredentials(t *testing.T) {
 	for _, e := range container.Env {
 		if e.Name == envOCIAuthConfigPathName {
 			foundEnv = true
-			if e.Value != ociCredentialsMountPath {
-				t.Fatalf("expected env value %q, got %q", ociCredentialsMountPath, e.Value)
+			if e.Value != ociAuthMountPath {
+				t.Fatalf("expected env value %q, got %q", ociAuthMountPath, e.Value)
 			}
 		}
 	}
@@ -397,9 +434,9 @@ func TestBuildJobSATokenSidecarOnly(t *testing.T) {
 	}
 
 	// Pod volumes must contain the evalhub-sa-token projected volume.
-	foundPodVolume := findVolume(job.Spec.Template.Spec.Volumes, evalhubSATokenVolumeName)
+	foundPodVolume := findVolume(job.Spec.Template.Spec.Volumes, evalhubSAVolumeName)
 	if foundPodVolume == nil {
-		t.Fatalf("expected pod volume %q", evalhubSATokenVolumeName)
+		t.Fatalf("expected pod volume %q", evalhubSAVolumeName)
 	}
 	if foundPodVolume.Projected == nil {
 		t.Fatal("evalhub-sa-token volume must be a projected volume")
@@ -419,9 +456,9 @@ func TestBuildJobSATokenSidecarOnly(t *testing.T) {
 	if sidecar == nil {
 		t.Fatal("sidecar init container not found")
 	}
-	foundSidecarMount := findVolumeMount(sidecar.VolumeMounts, evalhubSATokenVolumeName)
+	foundSidecarMount := findVolumeMount(sidecar.VolumeMounts, evalhubSAVolumeName)
 	if foundSidecarMount == nil {
-		t.Fatalf("sidecar must mount %q", evalhubSATokenVolumeName)
+		t.Fatalf("sidecar must mount %q", evalhubSAVolumeName)
 	}
 	if foundSidecarMount.MountPath != k8sSAMountPath {
 		t.Errorf("sidecar SA token mount path: got %q, want %q", foundSidecarMount.MountPath, k8sSAMountPath)
@@ -435,8 +472,8 @@ func TestBuildJobSATokenSidecarOnly(t *testing.T) {
 	if adapter == nil {
 		t.Fatal("adapter container not found")
 	}
-	if findVolumeMount(adapter.VolumeMounts, evalhubSATokenVolumeName) != nil {
-		t.Fatalf("adapter must not have %q volume mount", evalhubSATokenVolumeName)
+	if findVolumeMount(adapter.VolumeMounts, evalhubSAVolumeName) != nil {
+		t.Fatalf("adapter must not have %q volume mount", evalhubSAVolumeName)
 	}
 
 	// Adapter must have the pod-namespace DownwardAPI volume mounted at k8sSAMountPath
@@ -466,5 +503,257 @@ func TestBuildJobSATokenSidecarOnly(t *testing.T) {
 	}
 	if !foundNamespaceMount.ReadOnly {
 		t.Error("adapter namespace mount must be read-only")
+	}
+}
+
+func TestBuildJobWithGitTestDataPublicRepo(t *testing.T) {
+	cfg := &jobConfig{
+		jobID:             "job-git-public",
+		resourceGUID:      "guid-git-public",
+		benchmarkIndex:    0,
+		namespace:         "default",
+		providerID:        "provider-1",
+		benchmarkID:       "bench-1",
+		adapterImage:      "adapter:latest",
+		defaultEnv:        []api.EnvVar{},
+		testDataInitImage: "quay.io/evalhub/evalhub:test",
+		testDataGit: gitTestDataConfig{
+			url: "https://github.com/org/repo.git",
+			ref: "main",
+		},
+	}
+
+	job, err := buildJob(cfg)
+	if err != nil {
+		t.Fatalf("buildJob returned error: %v", err)
+	}
+
+	initContainer := findContainer(job.Spec.Template.Spec.InitContainers, initContainerName)
+	if initContainer == nil {
+		t.Fatal("expected git init container")
+		return
+	}
+	if len(initContainer.Command) != 1 || initContainer.Command[0] != defaultTestDataInitCmd {
+		t.Fatalf("expected init container command %q, got %v", defaultTestDataInitCmd, initContainer.Command)
+	}
+
+	var foundURL, foundRef bool
+	for _, env := range initContainer.Env {
+		if env.Name == envTestDataGitURLName {
+			foundURL = true
+			if env.Value != "https://github.com/org/repo.git" {
+				t.Fatalf("expected git URL env %q, got %q", "https://github.com/org/repo.git", env.Value)
+			}
+		}
+		if env.Name == envTestDataGitRefName {
+			foundRef = true
+			if env.Value != "main" {
+				t.Fatalf("expected git ref env %q, got %q", "main", env.Value)
+			}
+		}
+	}
+	if !foundURL || !foundRef {
+		t.Fatal("expected URL and ref env vars on git init container")
+	}
+
+	// No secret volume for public repos.
+	for _, v := range job.Spec.Template.Spec.Volumes {
+		if v.Name == testDataGitAuthVolumeName {
+			t.Fatalf("expected no %s volume for public repo", testDataGitAuthVolumeName)
+		}
+	}
+
+	if findVolume(job.Spec.Template.Spec.Volumes, testDataVolumeName) == nil {
+		t.Fatal("expected test-data emptyDir volume")
+	}
+
+	var foundTestDataMount bool
+	for _, m := range job.Spec.Template.Spec.Containers[0].VolumeMounts {
+		if m.Name == testDataVolumeName && m.MountPath == testDataMountPath {
+			foundTestDataMount = true
+			if !m.ReadOnly {
+				t.Fatal("expected adapter test-data mount to be read-only")
+			}
+		}
+	}
+	if !foundTestDataMount {
+		t.Fatalf("expected adapter to mount %s", testDataMountPath)
+	}
+
+	// Sidecar must not mount test-data — it uses init-metadata instead.
+	sidecar := findContainer(job.Spec.Template.Spec.InitContainers, sidecarContainerName)
+	if sidecar == nil {
+		t.Fatal("expected sidecar init container")
+		return
+	}
+	for _, m := range sidecar.VolumeMounts {
+		if m.Name == testDataVolumeName {
+			t.Fatal("sidecar must not mount test-data volume")
+		}
+	}
+}
+
+func TestBuildJobWithGitTestDataPrivateRepo(t *testing.T) {
+	cfg := &jobConfig{
+		jobID:             "job-git-private",
+		resourceGUID:      "guid-git-private",
+		benchmarkIndex:    0,
+		namespace:         "default",
+		providerID:        "provider-1",
+		benchmarkID:       "bench-1",
+		adapterImage:      "adapter:latest",
+		defaultEnv:        []api.EnvVar{},
+		testDataInitImage: "quay.io/evalhub/evalhub:test",
+		testDataGit: gitTestDataConfig{
+			url:       "https://github.com/org/private-repo.git",
+			ref:       "v1.2.0",
+			subPath:   "datasets/lm-eval",
+			secretRef: "my-git-secret",
+		},
+	}
+
+	job, err := buildJob(cfg)
+	if err != nil {
+		t.Fatalf("buildJob returned error: %v", err)
+	}
+
+	initContainer := findContainer(job.Spec.Template.Spec.InitContainers, initContainerName)
+	if initContainer == nil {
+		t.Fatal("expected git init container")
+		return
+	}
+
+	var foundSubPath bool
+	for _, env := range initContainer.Env {
+		if env.Name == envTestDataGitSubPathName {
+			foundSubPath = true
+			if env.Value != "datasets/lm-eval" {
+				t.Fatalf("expected sub_path env %q, got %q", "datasets/lm-eval", env.Value)
+			}
+		}
+	}
+	if !foundSubPath {
+		t.Fatal("expected sub_path env var on git init container")
+	}
+
+	var foundSecretVolume, foundSecretMount bool
+	for _, v := range job.Spec.Template.Spec.Volumes {
+		if v.Name == testDataGitAuthVolumeName {
+			foundSecretVolume = true
+			if v.Secret == nil || v.Secret.SecretName != "my-git-secret" {
+				t.Fatalf("expected secret volume with secret %q", "my-git-secret")
+			}
+		}
+	}
+	for _, m := range initContainer.VolumeMounts {
+		if m.Name == testDataGitAuthVolumeName && m.MountPath == testDataInitMountPath && m.ReadOnly {
+			foundSecretMount = true
+		}
+	}
+	if !foundSecretVolume {
+		t.Fatal("expected git secret volume for private repo")
+	}
+	if !foundSecretMount {
+		t.Fatal("expected git secret mount in init container for private repo")
+	}
+
+	// Secret must NOT be mounted in the adapter container.
+	for _, m := range job.Spec.Template.Spec.Containers[0].VolumeMounts {
+		if m.Name == testDataGitAuthVolumeName {
+			t.Fatalf("adapter must not mount git secret volume")
+		}
+	}
+}
+
+func TestBuildJobSidecarMountsTestDataVolumeForGitSource(t *testing.T) {
+	cfg := &jobConfig{
+		jobID:             "job-git-sidecar-mount",
+		resourceGUID:      "guid-git-sidecar",
+		benchmarkIndex:    0,
+		namespace:         "default",
+		providerID:        "provider-1",
+		benchmarkID:       "bench-1",
+		adapterImage:      "adapter:latest",
+		defaultEnv:        []api.EnvVar{},
+		testDataInitImage: "quay.io/evalhub/evalhub:test",
+		sidecarConfig:     &config.SidecarConfig{BaseURL: config.DefaultSidecarBaseURL},
+		testDataGit: gitTestDataConfig{
+			url: "https://github.com/org/repo.git",
+			ref: "main",
+		},
+	}
+
+	job, err := buildJob(cfg)
+	if err != nil {
+		t.Fatalf("buildJob returned error: %v", err)
+	}
+
+	sidecar := findContainer(job.Spec.Template.Spec.InitContainers, sidecarContainerName)
+	if sidecar == nil {
+		t.Fatal("expected sidecar init container")
+		return
+	}
+
+	var found bool
+	for _, m := range sidecar.VolumeMounts {
+		if m.Name == initMetadataVolumeName && m.MountPath == initMetadataMountPath {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected sidecar to mount %s at %s for git SHA reporting", initMetadataVolumeName, initMetadataMountPath)
+	}
+}
+
+func TestBuildJobSidecarDoesNotMountTestDataVolumeForNonGitSource(t *testing.T) {
+	cfg := &jobConfig{
+		jobID:          "job-no-git",
+		resourceGUID:   "guid-no-git",
+		benchmarkIndex: 0,
+		namespace:      "default",
+		providerID:     "provider-1",
+		benchmarkID:    "bench-1",
+		adapterImage:   "adapter:latest",
+		defaultEnv:     []api.EnvVar{},
+		sidecarConfig:  &config.SidecarConfig{BaseURL: config.DefaultSidecarBaseURL},
+	}
+
+	job, err := buildJob(cfg)
+	if err != nil {
+		t.Fatalf("buildJob returned error: %v", err)
+	}
+
+	sidecar := findContainer(job.Spec.Template.Spec.InitContainers, sidecarContainerName)
+	if sidecar == nil {
+		t.Fatal("expected sidecar init container")
+		return
+	}
+
+	for _, m := range sidecar.VolumeMounts {
+		if m.Name == initMetadataVolumeName {
+			t.Fatalf("sidecar must not mount init-metadata volume when no git source is configured")
+		}
+	}
+}
+
+func TestBuildJobWithGitTestDataMissingInitImage(t *testing.T) {
+	cfg := &jobConfig{
+		jobID:          "job-git-no-image",
+		resourceGUID:   "guid-git-no-image",
+		benchmarkIndex: 0,
+		namespace:      "default",
+		providerID:     "provider-1",
+		benchmarkID:    "bench-1",
+		adapterImage:   "adapter:latest",
+		defaultEnv:     []api.EnvVar{},
+		testDataGit: gitTestDataConfig{
+			url: "https://github.com/org/repo.git",
+			ref: "main",
+		},
+	}
+
+	_, err := buildJob(cfg)
+	if err == nil {
+		t.Fatal("expected error when git test data is set but init image is missing")
 	}
 }

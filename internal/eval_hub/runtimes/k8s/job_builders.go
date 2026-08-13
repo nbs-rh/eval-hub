@@ -7,6 +7,7 @@ import (
 	"regexp"
 
 	"github.com/eval-hub/eval-hub/internal/eval_hub/config"
+	"github.com/eval-hub/eval-hub/internal/runtimeenv"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -21,7 +22,6 @@ const (
 	defaultJobBackoffLimit = int32(0)
 	adapterContainerName   = "adapter"
 	sidecarContainerName   = "sidecar"
-	defaultSidecarPort     = int32(8080)
 	initContainerName      = "init"
 	jobSpecVolumeName      = "job-spec"
 	dataVolumeName         = "data"
@@ -41,11 +41,11 @@ const (
 	envMLFlowTrackingURIName          = "MLFLOW_TRACKING_URI"
 	envMLFlowWorkspaceName            = "MLFLOW_WORKSPACE"
 	mlflowTokenVolumeName             = "mlflow-token"
-	mlflowTokenMountPath              = "/var/run/secrets/mlflow" // #nosec G101 -- K8s secret mount path
+	mlflowAuthMountPath               = "/var/run/secrets/mlflow"
 	mlflowTokenFile                   = "token"
 	ociCredentialsVolumeName          = "oci-credentials"
-	ociCredentialsMountPath           = "/etc/evalhub/.docker/config.json" // #nosec G101 -- K8s secret mount path
-	ociCredentialsSubPath             = ".dockerconfigjson"                // #nosec G101 -- K8s secret subpath name
+	ociAuthMountPath                  = "/etc/evalhub/.docker/config.json"
+	ociDockerConfigSubPath            = ".dockerconfigjson"
 	envOCIAuthConfigPathName          = "OCI_AUTH_CONFIG_PATH"
 	modelAuthVolumeName               = "model-auth" // credentials secret; mounted in sidecar only
 	modelAuthMountPath                = "/var/run/secrets/model"
@@ -53,20 +53,26 @@ const (
 	// adapter DownwardAPI namespace volume so the SDK finds files at the expected locations.
 	k8sSAMountPath = "/var/run/secrets/kubernetes.io/serviceaccount"
 	// evalhub SA token — projected into sidecar only; pod-level auto-mount is disabled so adapter cannot see it.
-	evalhubSATokenVolumeName = "evalhub-sa-token" // #nosec G101 -- K8s projected volume name
-	evalhubSATokenFile       = "token"
+	evalhubSAVolumeName = "evalhub-sa-token"
+	evalhubSATokenFile  = "token"
 	// pod namespace projected into adapter via DownwardAPI so the SDK can set X-Tenant on sidecar requests.
 	// The SA token auto-mount is disabled so the standard namespace file is absent; we expose it explicitly.
 	adapterNamespaceVolumeName      = "pod-namespace"
 	adapterNamespaceFile            = "namespace"
 	modelInternalAuthVolumeName     = "model-auth-internal" // internalModelRef projected volume; mounted in adapter during credential injection
 	testDataSecretVolumeName        = "test-data-secret"
-	testDataSecretMountPath         = "/var/run/secrets/test-data" // #nosec G101 -- K8s secret mount path
+	testDataInitMountPath           = "/var/run/secrets/test-data"
 	serviceCABundleFile             = "service-ca.crt"
 	envMLFlowCertPathName           = "MLFLOW_TRACKING_SERVER_CERT_PATH"
 	envEvalHubModeName              = "EVALHUB_MODE"
 	envTestDataS3BucketName         = "TEST_DATA_S3_BUCKET"
 	envTestDataS3KeyName            = "TEST_DATA_S3_KEY"
+	envTestDataGitURLName           = "TEST_DATA_GIT_URL"
+	envTestDataGitRefName           = "TEST_DATA_GIT_REF"
+	envTestDataGitSubPathName       = "TEST_DATA_GIT_SUBPATH"
+	testDataGitAuthVolumeName       = "test-data-git-auth"
+	initMetadataVolumeName          = "init-metadata" // emptyDir shared between init container and sidecar only
+	initMetadataMountPath           = runtimeenv.InitMetadataDir
 	defaultInitCPURequest           = "100m"
 	defaultInitCPULimit             = "500m"
 	defaultInitMemoryRequest        = "128Mi"
@@ -92,6 +98,7 @@ const (
 	labelKueueQueueNameKey           = "kueue.x-k8s.io/queue-name"
 	labelKueuePriorityClassKey       = "kueue.x-k8s.io/priority-class"
 	labelEvaluationPhaseKey          = "trustyai.opendatahub.io/evaluation-phase"
+	annotationEvaluationStatusKey    = "trustyai.opendatahub.io/evaluation-status"
 )
 
 var (
@@ -173,14 +180,15 @@ func buildJob(cfg *jobConfig) (*batchv1.Job, error) {
 			VolumeMounts:    runtimeContainerVolumeMounts,
 		},
 	}
-	probePort := defaultSidecarPort
+	probePort := int32(config.DefaultSidecarPort)
 	if cfg.sidecarConfig != nil && cfg.sidecarConfig.Port != 0 {
-		p, err := sidecarPortFromInt(cfg.sidecarConfig.Port)
-		if err != nil {
-			return nil, fmt.Errorf("sidecar port: %w", err)
+		p := cfg.sidecarConfig.Port
+		if p < 1 || p > 65535 {
+			return nil, fmt.Errorf("sidecar port %d out of range (1-65535)", p)
 		}
 		probePort = p
 	}
+
 	// Sidecar is added as an init container with restartPolicy=Always to be
 	// promoted as a native sidecar container (KEP-753).
 	sidecarRestartPolicy := corev1.ContainerRestartPolicyAlways

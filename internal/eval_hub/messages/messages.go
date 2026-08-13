@@ -107,6 +107,13 @@ var (
 		"resource_does_not_exist",
 	)
 
+	// ModelURLRequired The model URL is required when not all benchmarks have pre-recorded data.
+	ModelURLRequired = createMessage(
+		constants.HTTPCodeBadRequest,
+		"The model URL is required when not all benchmarks have pre-recorded data.",
+		"model_url_required",
+	)
+
 	// LocalRuntimeNotEnabled Local runtime is not enabled for provider '{{.ProviderID}}'. Please configure a local runtime command for this provider and try again.
 	LocalRuntimeNotEnabled = createMessage(
 		constants.HTTPCodeBadRequest,
@@ -265,6 +272,13 @@ var (
 		constants.HTTPCodeBadRequest,
 		"The hardware profile '{{.Name}}' is invalid: '{{.Error}}'.",
 		"hardware_profile_invalid",
+	)
+
+	// ResolvedSHAReadOnly The field 'resolved_sha' is read-only and must not be set on create.
+	ResolvedSHAReadOnly = createMessage(
+		constants.HTTPCodeBadRequest,
+		"The field 'resolved_sha' is read-only and must not be set on create.",
+		"resolved_sha_read_only",
 	)
 )
 
