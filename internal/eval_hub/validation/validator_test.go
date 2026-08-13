@@ -565,6 +565,55 @@ func TestTestDataRef_BothS3AndPVCRejected(t *testing.T) {
 	}
 }
 
+// TestRequiredWithoutAllFields exercises the required_without_all / excluded_with tags on TestDataRef.
+func TestRequiredWithoutAllFields(t *testing.T) {
+	validate := newTestValidator(t)
+	{
+		ref := api.TestDataRef{}
+		err := validate.Struct(ref)
+		if err == nil {
+			t.Fatal("expected validation error when neither s3 nor pvc nor git is set")
+		}
+	}
+	{
+		ref := api.TestDataRef{
+			S3: &api.S3TestDataRef{Bucket: "b", Key: "k", SecretRef: "s"},
+		}
+		err := validate.Struct(ref)
+		if err != nil {
+			t.Fatalf("expected no error when s3 is set, got: %v", err)
+		}
+	}
+	{
+		ref := api.TestDataRef{
+			PVC: &api.PVCTestDataRef{ClaimName: "my-pvc"},
+		}
+		err := validate.Struct(ref)
+		if err != nil {
+			t.Fatalf("expected no error when pvc is set, got: %v", err)
+		}
+	}
+	{
+		ref := api.TestDataRef{
+			Git: &api.GitTestDataRef{URL: "https://github.com/my-org/my-repo.git", Ref: "main"},
+		}
+		err := validate.Struct(ref)
+		if err != nil {
+			t.Fatalf("expected no error when git is set, got: %v", err)
+		}
+	}
+	{
+		ref := api.TestDataRef{
+			S3:  &api.S3TestDataRef{Bucket: "b", Key: "k", SecretRef: "s"},
+			Git: &api.GitTestDataRef{URL: "https://github.com/my-org/my-repo.git", Ref: "main"},
+		}
+		err := validate.Struct(ref)
+		if err == nil {
+			t.Fatal("expected validation error when both s3 and git are set")
+		}
+	}
+}
+
 func TestTestDataRef_NeitherS3NorPVCRejected(t *testing.T) {
 	validate := newTestValidator(t)
 	ref := api.TestDataRef{}
@@ -613,5 +662,320 @@ func TestPVCTestDataRef_ValidClaimNameAccepted(t *testing.T) {
 		if err := validate.Struct(ref); err != nil {
 			t.Errorf("expected no error for claim %q, got: %v", name, err)
 		}
+	}
+}
+
+func TestTestDataRef_GitOnlyAccepted(t *testing.T) {
+	validate := newTestValidator(t)
+	ref := api.TestDataRef{
+		Git: &api.GitTestDataRef{URL: "https://github.com/org/repo.git", Ref: "main"},
+	}
+	if err := validate.Struct(ref); err != nil {
+		t.Fatalf("expected no error for valid git-only TestDataRef, got: %v", err)
+	}
+}
+
+func TestTestDataRef_GitWithSecretRefAccepted(t *testing.T) {
+	validate := newTestValidator(t)
+	ref := api.TestDataRef{
+		Git: &api.GitTestDataRef{URL: "https://github.com/org/repo.git", Ref: "main", SecretRef: "my-secret"},
+	}
+	if err := validate.Struct(ref); err != nil {
+		t.Fatalf("expected no error for git TestDataRef with secret_ref, got: %v", err)
+	}
+}
+
+func TestTestDataRef_GitAndS3Rejected(t *testing.T) {
+	validate := newTestValidator(t)
+	ref := api.TestDataRef{
+		Git: &api.GitTestDataRef{URL: "https://github.com/org/repo.git", Ref: "main"},
+		S3:  &api.S3TestDataRef{Bucket: "b", Key: "k", SecretRef: "s"},
+	}
+	if err := validate.Struct(ref); err == nil {
+		t.Fatal("expected validation error when both git and s3 are set")
+	}
+}
+
+func TestTestDataRef_GitAndPVCRejected(t *testing.T) {
+	validate := newTestValidator(t)
+	ref := api.TestDataRef{
+		Git: &api.GitTestDataRef{URL: "https://github.com/org/repo.git", Ref: "main"},
+		PVC: &api.PVCTestDataRef{ClaimName: "my-pvc"},
+	}
+	if err := validate.Struct(ref); err == nil {
+		t.Fatal("expected validation error when both git and pvc are set")
+	}
+}
+
+func TestGitTestDataRef_MissingURLRejected(t *testing.T) {
+	validate := newTestValidator(t)
+	ref := api.GitTestDataRef{Ref: "main"}
+	if err := validate.Struct(ref); err == nil {
+		t.Fatal("expected validation error for missing git URL")
+	}
+}
+
+func TestGitTestDataRef_MissingRefRejected(t *testing.T) {
+	validate := newTestValidator(t)
+	ref := api.GitTestDataRef{URL: "https://github.com/org/repo.git"}
+	if err := validate.Struct(ref); err == nil {
+		t.Fatal("expected validation error for missing git ref")
+	}
+}
+
+func TestGitTestDataRef_InvalidSecretRefRejected(t *testing.T) {
+	validate := newTestValidator(t)
+	ref := api.GitTestDataRef{URL: "https://github.com/org/repo.git", Ref: "main", SecretRef: "Invalid_Name"}
+	if err := validate.Struct(ref); err == nil {
+		t.Fatal("expected validation error for invalid secret_ref DNS label")
+	}
+}
+
+func TestGitTestDataRef_BlockedHostsRejected(t *testing.T) {
+	validate := newTestValidator(t)
+	cases := []string{
+		"https://127.0.0.1/repo.git",
+		"https://10.0.0.1/repo.git",
+		"https://localhost/repo.git",
+		"https://git.default.svc.cluster.local/repo.git",
+		"https://169.254.169.254/repo.git",
+	}
+	for _, u := range cases {
+		ref := api.GitTestDataRef{URL: u, Ref: "main"}
+		if err := validate.Struct(ref); err == nil {
+			t.Errorf("expected validation error for git url %q", u)
+		}
+	}
+}
+
+func TestGitTestDataRef_PublicHostAccepted(t *testing.T) {
+	validate := newTestValidator(t)
+	ref := api.GitTestDataRef{URL: "https://github.com/org/repo.git", Ref: "main"}
+	if err := validate.Struct(ref); err != nil {
+		t.Fatalf("expected no error for public git host, got: %v", err)
+	}
+}
+
+func TestGitTestDataRef_HTTPWithoutSecretAccepted(t *testing.T) {
+	validate := newTestValidator(t)
+	ref := api.GitTestDataRef{URL: "http://git.example.com/repo.git", Ref: "main"}
+	if err := validate.Struct(ref); err != nil {
+		t.Fatalf("expected no error for http without secret_ref, got: %v", err)
+	}
+}
+
+func TestGitTestDataRef_HTTPWithSecretRejected(t *testing.T) {
+	validate := newTestValidator(t)
+	ref := api.GitTestDataRef{
+		URL:       "http://git.example.com/repo.git",
+		Ref:       "main",
+		SecretRef: "git-creds",
+	}
+	if err := validate.Struct(ref); err == nil {
+		t.Fatal("expected validation error for http url with secret_ref")
+	}
+}
+
+func TestGitTestDataRef_HTTPSWithSecretAccepted(t *testing.T) {
+	validate := newTestValidator(t)
+	ref := api.GitTestDataRef{
+		URL:       "https://github.com/org/repo.git",
+		Ref:       "main",
+		SecretRef: "git-creds",
+	}
+	if err := validate.Struct(ref); err != nil {
+		t.Fatalf("expected no error for https with secret_ref, got: %v", err)
+	}
+}
+
+func TestStatusEvent_BenchmarkStatusEventRequired(t *testing.T) {
+	validate := newTestValidator(t)
+	ev := api.StatusEvent{BenchmarkStatusEvent: &api.BenchmarkStatusEvent{
+		ProviderID: "p1",
+		ID:         "b1",
+		Status:     "running",
+	}}
+	if err := validate.Struct(ev); err != nil {
+		t.Fatalf("expected no error for valid StatusEvent, got: %v", err)
+	}
+}
+
+func TestStatusEvent_MissingBenchmarkStatusEventRejected(t *testing.T) {
+	validate := newTestValidator(t)
+	ev := api.StatusEvent{}
+	if err := validate.Struct(ev); err == nil {
+		t.Fatal("expected validation error when BenchmarkStatusEvent is nil")
+	}
+}
+
+// --- Tests for model struct tag validation ---
+
+func TestEvaluationJobConfig_ModelNilRejected(t *testing.T) {
+	validate := newTestValidator(t)
+	cfg := api.EvaluationJobConfig{
+		Name:  "test-job",
+		Model: nil,
+		Benchmarks: []api.EvaluationBenchmarkConfig{
+			{Ref: api.Ref{ID: "b1"}, ProviderID: "provider-1"},
+		},
+	}
+	err := validate.Struct(cfg)
+	if err == nil {
+		t.Fatal("expected validation error when Model is nil")
+	}
+}
+
+func TestEvaluationJobConfig_ModelURLEmpty_AcceptedByValidator(t *testing.T) {
+	validate := newTestValidator(t)
+	cfg := api.EvaluationJobConfig{
+		Name:  "test-job",
+		Model: &api.ModelRef{URL: "", Name: "model"},
+		Benchmarks: []api.EvaluationBenchmarkConfig{
+			{Ref: api.Ref{ID: "b1"}, ProviderID: "provider-1"},
+		},
+	}
+	err := validate.Struct(cfg)
+	if err != nil {
+		t.Fatalf("expected no validation error for empty model URL (handler enforces this), got: %v", err)
+	}
+}
+
+func TestEvaluationJobConfig_ModelURLNotRequired_AllBenchmarksPreRecorded(t *testing.T) {
+	validate := newTestValidator(t)
+	cfg := api.EvaluationJobConfig{
+		Name:  "test-job",
+		Model: &api.ModelRef{URL: "", Name: "model"},
+		Benchmarks: []api.EvaluationBenchmarkConfig{
+			{
+				Ref:        api.Ref{ID: "b1"},
+				ProviderID: "provider-1",
+				TestDataRef: &api.TestDataRef{
+					Type: "pre_recorded_data",
+					S3:   &api.S3TestDataRef{Bucket: "b", Key: "k", SecretRef: "s"},
+				},
+			},
+			{
+				Ref:        api.Ref{ID: "b2"},
+				ProviderID: "provider-1",
+				TestDataRef: &api.TestDataRef{
+					Type: "pre_recorded_data",
+					PVC:  &api.PVCTestDataRef{ClaimName: "my-pvc"},
+				},
+			},
+		},
+	}
+	err := validate.Struct(cfg)
+	if err != nil {
+		t.Fatalf("expected no error when all benchmarks have pre_recorded_data, got: %v", err)
+	}
+}
+
+func TestEvaluationJobConfig_ModelURLNotRequired_Collection(t *testing.T) {
+	validate := newTestValidator(t)
+	cfg := api.EvaluationJobConfig{
+		Name:       "test-job",
+		Model:      &api.ModelRef{URL: "", Name: "model"},
+		Collection: &api.CollectionRef{ID: "coll-1"},
+	}
+	err := validate.Struct(cfg)
+	if err != nil {
+		t.Fatalf("expected no error when using a collection (URL check is in handler), got: %v", err)
+	}
+}
+
+func TestEvaluationJobConfig_ModelURLValid_NonPreRecordedBenchmarks(t *testing.T) {
+	validate := newTestValidator(t)
+	cfg := api.EvaluationJobConfig{
+		Name:  "test-job",
+		Model: &api.ModelRef{URL: "http://model.example.com/v1", Name: "model"},
+		Benchmarks: []api.EvaluationBenchmarkConfig{
+			{Ref: api.Ref{ID: "b1"}, ProviderID: "provider-1"},
+		},
+	}
+	err := validate.Struct(cfg)
+	if err != nil {
+		t.Fatalf("expected no error when model URL is valid, got: %v", err)
+	}
+}
+
+func TestEvaluationJobConfig_ModelURLInvalid_Rejected(t *testing.T) {
+	validate := newTestValidator(t)
+	cfg := api.EvaluationJobConfig{
+		Name:  "test-job",
+		Model: &api.ModelRef{URL: "not-a-url", Name: "model"},
+		Benchmarks: []api.EvaluationBenchmarkConfig{
+			{Ref: api.Ref{ID: "b1"}, ProviderID: "provider-1"},
+		},
+	}
+	err := validate.Struct(cfg)
+	if err == nil {
+		t.Fatal("expected validation error for invalid model URL format")
+	}
+}
+
+// --- Tests for TestDataRef.Type field validation ---
+
+func TestTestDataRef_TypeValidValues(t *testing.T) {
+	validate := newTestValidator(t)
+	validTypes := []string{"", "data_set", "pre_recorded_data"}
+	for _, typ := range validTypes {
+		t.Run("type="+typ, func(t *testing.T) {
+			ref := api.TestDataRef{
+				Type: typ,
+				S3:   &api.S3TestDataRef{Bucket: "b", Key: "k", SecretRef: "s"},
+			}
+			if err := validate.Struct(ref); err != nil {
+				t.Fatalf("expected no error for type %q, got: %v", typ, err)
+			}
+		})
+	}
+}
+
+func TestTestDataRef_TypeInvalidValues(t *testing.T) {
+	validate := newTestValidator(t)
+	invalidTypes := []string{"unknown", "recorded", "dataset", "PRE_RECORDED_DATA"}
+	for _, typ := range invalidTypes {
+		t.Run("type="+typ, func(t *testing.T) {
+			ref := api.TestDataRef{
+				Type: typ,
+				S3:   &api.S3TestDataRef{Bucket: "b", Key: "k", SecretRef: "s"},
+			}
+			if err := validate.Struct(ref); err == nil {
+				t.Fatalf("expected validation error for type %q", typ)
+			}
+		})
+	}
+}
+
+func TestTestDataRef_PreRecordedDataWithS3(t *testing.T) {
+	validate := newTestValidator(t)
+	ref := api.TestDataRef{
+		Type: "pre_recorded_data",
+		S3:   &api.S3TestDataRef{Bucket: "b", Key: "k", SecretRef: "s"},
+	}
+	if err := validate.Struct(ref); err != nil {
+		t.Fatalf("expected no error for pre_recorded_data with S3, got: %v", err)
+	}
+}
+
+func TestTestDataRef_PreRecordedDataWithPVC(t *testing.T) {
+	validate := newTestValidator(t)
+	ref := api.TestDataRef{
+		Type: "pre_recorded_data",
+		PVC:  &api.PVCTestDataRef{ClaimName: "my-pvc"},
+	}
+	if err := validate.Struct(ref); err != nil {
+		t.Fatalf("expected no error for pre_recorded_data with PVC, got: %v", err)
+	}
+}
+
+func TestTestDataRef_PreRecordedDataWithGit(t *testing.T) {
+	validate := newTestValidator(t)
+	ref := api.TestDataRef{
+		Type: "pre_recorded_data",
+		Git:  &api.GitTestDataRef{URL: "https://github.com/org/repo.git", Ref: "main"},
+	}
+	if err := validate.Struct(ref); err != nil {
+		t.Fatalf("expected no error for pre_recorded_data with Git, got: %v", err)
 	}
 }
