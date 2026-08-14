@@ -1,6 +1,7 @@
 package features
 
 import (
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"errors"
@@ -20,6 +21,7 @@ import (
 	"time"
 
 	"github.com/eval-hub/eval-hub/internal/eval_hub/server"
+	"github.com/eval-hub/eval-hub/pkg/mlflowclient"
 
 	"github.com/cucumber/godog"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -223,6 +225,20 @@ func (tc *scenarioConfig) mlflowWorkspace() string {
 	return workspace
 }
 
+func (tc *scenarioConfig) mlflowClient() (*mlflowclient.Client, error) {
+	baseURL, err := mlflowBaseURL()
+	if err != nil {
+		return nil, err
+	}
+	client := mlflowclient.NewClient(baseURL).
+		WithContext(context.Background()).
+		WithHTTPClient(getMLflowHTTPClient()).
+		WithToken(os.Getenv("AUTH_TOKEN")).
+		WithWorkspacesSupport(true).
+		WithWorkspace(tc.mlflowWorkspace())
+	return client, nil
+}
+
 func isMetricsScrapePath(path string) bool {
 	path = strings.TrimSpace(path)
 	if path == "/metrics" {
@@ -295,7 +311,7 @@ func scenarioTagNames(sc *godog.Scenario) []string {
 }
 
 func (tc *scenarioConfig) logDebug(format string, a ...any) {
-	if v, exists := tc.reqHeaders[server.TRANSACTION_ID_HEADER]; exists && v != "" {
+	if v, exists := tc.reqHeaders[server.TransactionIDHeader]; exists && v != "" {
 		format = fmt.Sprintf("(%s) %s", v, format)
 	}
 	fmt.Printf(format, a...)
@@ -305,7 +321,7 @@ func (tc *scenarioConfig) logDebug(format string, a ...any) {
 func (tc *scenarioConfig) logError(err error, withStack ...bool) error {
 	var sb = strings.Builder{}
 	sb.WriteString("Error")
-	if reqId, exists := tc.reqHeaders[server.TRANSACTION_ID_HEADER]; exists && reqId != "" {
+	if reqId, exists := tc.reqHeaders[server.TransactionIDHeader]; exists && reqId != "" {
 		fmt.Fprintf(&sb, " (%s)", reqId)
 	}
 	sb.WriteString(": ")
