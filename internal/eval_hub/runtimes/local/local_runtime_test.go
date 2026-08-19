@@ -15,6 +15,7 @@ import (
 	"github.com/eval-hub/eval-hub/internal/eval_hub/abstractions"
 	"github.com/eval-hub/eval-hub/internal/eval_hub/config"
 	"github.com/eval-hub/eval-hub/internal/eval_hub/handlers"
+	"github.com/eval-hub/eval-hub/internal/eval_hub/messages"
 	"github.com/eval-hub/eval-hub/internal/eval_hub/runtimes/shared"
 	"github.com/eval-hub/eval-hub/pkg/api"
 )
@@ -345,8 +346,8 @@ func TestRunEvaluationJobPassesEnvVar(t *testing.T) {
 	outputFile := filepath.Join(dirName, "env_output.txt")
 	sentinelPath := filepath.Join(dirName, "done")
 
-	// Command writes EVALHUB_JOB_SPEC_PATH and TEST_VAR to output file
-	command := fmt.Sprintf("sh -c 'echo $EVALHUB_JOB_SPEC_PATH > %s && echo $TEST_VAR >> %s && touch %s'", outputFile, outputFile, sentinelPath)
+	// Command writes EVALHUB_JOB_SPEC_PATH, TEST_VAR, and EVALHUB_MODE to output file
+	command := fmt.Sprintf("sh -c 'echo $EVALHUB_JOB_SPEC_PATH > %s && echo $TEST_VAR >> %s && echo $EVALHUB_MODE >> %s && touch %s'", outputFile, outputFile, outputFile, sentinelPath)
 	providers := sampleLocalProviders(providerID, command)
 
 	rt := &LocalRuntime{
@@ -382,16 +383,19 @@ func TestRunEvaluationJobPassesEnvVar(t *testing.T) {
 		t.Fatal("expected env output, got empty file")
 	}
 
-	// Parse the two lines
+	// Parse the three lines
 	lines := strings.Split(output, "\n")
-	if len(lines) < 2 {
-		t.Fatalf("expected at least 2 lines in env output, got %d: %q", len(lines), output)
+	if len(lines) < 3 {
+		t.Fatalf("expected at least 3 lines in env output, got %d: %q", len(lines), output)
 	}
 	if lines[0] != absExpectedPath {
 		t.Fatalf("expected EVALHUB_JOB_SPEC_PATH=%q, got %q", absExpectedPath, lines[0])
 	}
 	if lines[1] != "test_value" {
 		t.Fatalf("expected TEST_VAR=%q, got %q", "test_value", lines[1])
+	}
+	if lines[2] != "local" {
+		t.Fatalf("EVALHUB_MODE = %q, want local", lines[2])
 	}
 }
 
@@ -930,7 +934,7 @@ func runSidecarEvalJob(t *testing.T) string {
 	t.Helper()
 	providerID := "provider-1"
 	evaluation := sampleEvaluation(providerID)
-	evaluation.Model.Auth = &api.ModelAuth{SecretRef: "/home/user1/model-auth"}
+	evaluation.Model.Auth = &api.ModelAuth{SecretRef: "file:///home/user1/model-auth"}
 	dirName := localJobDir("job-1", 0, providerID, "bench-1")
 	sentinelPath := filepath.Join(dirName, "done")
 	providers := sampleLocalProviders(providerID, fmt.Sprintf("touch %s", sentinelPath))
@@ -979,8 +983,8 @@ func TestRunEvaluationJobWithSidecarWritesSidecarJobInfo(t *testing.T) {
 	if info.Model.URL != "http://model.example" {
 		t.Fatalf("expected model URL %q, got %q", "http://model.example", info.Model.URL)
 	}
-	if info.Model.AuthSecretMountPath != "/home/user1/model-auth" {
-		t.Fatalf("expected auth path %q, got %q", "/home/user1/model-auth", info.Model.AuthSecretMountPath)
+	if info.Model.AuthSecretMountPath != "file:///home/user1/model-auth" {
+		t.Fatalf("expected auth path %q, got %q", "file:///home/user1/model-auth", info.Model.AuthSecretMountPath)
 	}
 	if info.Model.HTTPTimeout != shared.DefaultModelHTTPTimeout {
 		t.Fatalf("expected timeout %v, got %v", shared.DefaultModelHTTPTimeout, info.Model.HTTPTimeout)
@@ -1017,15 +1021,15 @@ func TestRunEvaluationJobWithSidecarRewritesJobSpec(t *testing.T) {
 	if spec.Model.Auth == nil {
 		t.Fatal("expected model auth to be set, got nil")
 	}
-	if spec.Model.Auth.SecretRef != "/home/user1/model-auth" {
-		t.Fatalf("expected auth secret_ref %q, got %q", "/home/user1/model-auth", spec.Model.Auth.SecretRef)
+	if spec.Model.Auth.SecretRef != "file:///home/user1/model-auth" {
+		t.Fatalf("expected auth secret_ref %q, got %q", "file:///home/user1/model-auth", spec.Model.Auth.SecretRef)
 	}
 }
 
 func TestRunEvaluationJobWithSidecarModelDefaults(t *testing.T) {
 	providerID := "provider-1"
 	evaluation := sampleEvaluation(providerID)
-	evaluation.Model.Auth = &api.ModelAuth{SecretRef: "/home/user1/model-auth"}
+	evaluation.Model.Auth = &api.ModelAuth{SecretRef: "file:///home/user1/model-auth"}
 	dirName := localJobDir("job-1", 0, providerID, "bench-1")
 	sentinelPath := filepath.Join(dirName, "done")
 	providers := sampleLocalProviders(providerID, fmt.Sprintf("touch %s", sentinelPath))
@@ -1120,6 +1124,97 @@ func TestRunEvaluationJobSidecarRewriteError(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("timed out waiting for failed benchmark status update")
+	}
+}
+
+func TestRunEvaluationJobSidecarRejectsInvalidSecretRef(t *testing.T) {
+	tests := []struct {
+		name      string
+		secretRef string
+	}{
+		{"raw path", "/home/user1/model-auth"},
+		{"host without path", "file://path"},
+		{"host with path", "file://host/path"},
+		{"single slash", "file:/tmp/key"},
+		{"opaque relative", "file:tmp/key"},
+		{"empty path", "file://"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			providerID := "provider-1"
+			evaluation := sampleEvaluation(providerID)
+			evaluation.Model.Auth = &api.ModelAuth{SecretRef: tc.secretRef}
+
+			providers := sampleLocalProviders(providerID, "true")
+			cleanupDir(t, "job-1")
+
+			cfg := &config.Config{
+				Service: &config.ServiceConfig{Port: 8080},
+				Sidecar: &config.SidecarConfig{LocalMode: true, BaseURL: "http://localhost:8082"},
+			}
+			rt, err := NewLocalRuntime(discardLogger(), cfg)
+			if err != nil {
+				t.Fatalf("NewLocalRuntime failed: %v", err)
+			}
+			rt = rt.WithContext(testContext(t))
+
+			storage := &fakeStorage{providerConfigs: providers}
+
+			benchmarks, err := handlers.GetJobBenchmarks(evaluation, nil)
+			if err != nil {
+				t.Fatalf("failed to resolve benchmarks: %v", err)
+			}
+
+			err = rt.RunEvaluationJob(evaluation, benchmarks, storage)
+			if err == nil {
+				t.Fatalf("expected error for secret_ref %q, got nil", tc.secretRef)
+			}
+			svcErr, ok := err.(abstractions.ServiceError)
+			if !ok {
+				t.Fatalf("expected ServiceError, got %T: %v", err, err)
+			}
+			if svcErr.MessageCode() != messages.InvalidSecretRefURI {
+				t.Fatalf("expected message code %q, got %q", messages.InvalidSecretRefURI.GetCode(), svcErr.MessageCode().GetCode())
+			}
+		})
+	}
+}
+
+func TestRunEvaluationJobSidecarRejectsMalformedURI(t *testing.T) {
+	providerID := "provider-1"
+	evaluation := sampleEvaluation(providerID)
+	evaluation.Model.Auth = &api.ModelAuth{SecretRef: "file:///%zz"}
+
+	providers := sampleLocalProviders(providerID, "true")
+	cleanupDir(t, "job-1")
+
+	cfg := &config.Config{
+		Service: &config.ServiceConfig{Port: 8080},
+		Sidecar: &config.SidecarConfig{LocalMode: true, BaseURL: "http://localhost:8082"},
+	}
+	rt, err := NewLocalRuntime(discardLogger(), cfg)
+	if err != nil {
+		t.Fatalf("NewLocalRuntime failed: %v", err)
+	}
+	rt = rt.WithContext(testContext(t))
+
+	storage := &fakeStorage{providerConfigs: providers}
+
+	benchmarks, err := handlers.GetJobBenchmarks(evaluation, nil)
+	if err != nil {
+		t.Fatalf("failed to resolve benchmarks: %v", err)
+	}
+
+	err = rt.RunEvaluationJob(evaluation, benchmarks, storage)
+	if err == nil {
+		t.Fatal("expected error for malformed URI, got nil")
+	}
+	svcErr, ok := err.(abstractions.ServiceError)
+	if !ok {
+		t.Fatalf("expected ServiceError, got %T: %v", err, err)
+	}
+	if svcErr.MessageCode() != messages.InvalidSecretRefURIParse {
+		t.Fatalf("expected message code %q, got %q", messages.InvalidSecretRefURIParse.GetCode(), svcErr.MessageCode().GetCode())
 	}
 }
 
