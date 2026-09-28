@@ -1,0 +1,17 @@
+type: object
+title: PostProcessingResource
+description: Standalone confidence interval post-processing resource.
+properties:
+  resource:
+    $ref: ./Resource.yaml
+  confidence_interval_config:
+    $ref: ./ConfidenceIntervalConfig.yaml
+  status:
+    $ref: ./PostProcessingStatus.yaml
+  results:
+    $ref: ./PostProcessingResults.yaml
+required:
+  - resource
+  - confidence_interval_config
+  - status
+additionalProperties: false
