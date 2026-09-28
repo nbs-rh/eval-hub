@@ -1,0 +1,7 @@
+type: object
+title: PostProcessing
+description: Post-processing configuration associated with an evaluation job.
+properties:
+  confidence_interval_config:
+    $ref: ./ConfidenceIntervalConfig.yaml
+additionalProperties: false

@@ -26,3 +26,10 @@ properties:
     type: string
     format: date-time
     description: RFC3339 completion time
+  post_processing_status:
+    type: object
+    description: Status of post-processing computations for this benchmark.
+    properties:
+      confidence_interval_computation:
+        $ref: ./PostProcessingStatus.yaml
+    additionalProperties: false

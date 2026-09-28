@@ -12,4 +12,7 @@ allOf:
       results:
         $ref: ./EvaluationJobResults.yaml
         description: Results when completed
+      post_processing:
+        $ref: ./PostProcessing.yaml
+        description: Post-processing configuration for the evaluation job
   - $ref: ./EvaluationJobConfig.yaml

@@ -40,6 +40,15 @@ get:
                       status: "completed"
                       started_at: "2026-01-15T09:31:00Z"
                       completed_at: "2026-01-15T09:38:45Z"
+                      post_processing_status:
+                        confidence_interval_computation:
+                          state: "completed"
+                          message:
+                            message: "Confidence interval computation completed."
+                            message_code: "post_processing_completed"
+                            message_origin: "server"
+                          started_at: "2026-01-15T09:39:00Z"
+                          completed_at: "2026-01-15T09:39:02Z"
                     - provider_id: "garak"
                       id: "owasp_llm_top10"
                       benchmark_index: 1
@@ -60,6 +69,9 @@ get:
                         primary_score: 0.85
                         threshold: 0.25
                         pass: true
+                        confidence_interval:
+                          lower: 0.8
+                          upper: 0.9
                     - id: "owasp_llm_top10"
                       provider_id: "garak"
                       benchmark_index: 1
@@ -75,6 +87,15 @@ get:
                     score: 0.85
                     threshold: 0.5
                     pass: true
+                post_processing:
+                  confidence_interval_config:
+                    process_benchmarks_in_parallel: true
+                    calibration_data_ref:
+                      s3:
+                        bucket: evaluation-data
+                        key: calibration/accuracy
+                        secret_ref: evaluation-s3
+                    significance_level: 0.7
                 name: "granite-3.1-8b-safety-eval"
                 description: "Safety and reasoning evaluation for Granite 3.1 8B Instruct"
                 tags:

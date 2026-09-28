@@ -572,7 +572,19 @@
                             "benchmark_index": 0,
                             "status": "completed",
                             "started_at": "2026-01-15T09:31:00Z",
-                            "completed_at": "2026-01-15T09:38:45Z"
+                            "completed_at": "2026-01-15T09:38:45Z",
+                            "post_processing_status": {
+                              "confidence_interval_computation": {
+                                "state": "completed",
+                                "message": {
+                                  "message": "Confidence interval computation completed.",
+                                  "message_code": "post_processing_completed",
+                                  "message_origin": "server"
+                                },
+                                "started_at": "2026-01-15T09:39:00Z",
+                                "completed_at": "2026-01-15T09:39:02Z"
+                              }
+                            }
                           },
                           {
                             "provider_id": "garak",
@@ -599,7 +611,11 @@
                             "test": {
                               "primary_score": 0.85,
                               "threshold": 0.25,
-                              "pass": true
+                              "pass": true,
+                              "confidence_interval": {
+                                "lower": 0.8,
+                                "upper": 0.9
+                              }
                             }
                           },
                           {
@@ -622,6 +638,19 @@
                           "score": 0.85,
                           "threshold": 0.5,
                           "pass": true
+                        }
+                      },
+                      "post_processing": {
+                        "confidence_interval_config": {
+                          "process_benchmarks_in_parallel": true,
+                          "calibration_data_ref": {
+                            "s3": {
+                              "bucket": "evaluation-data",
+                              "key": "calibration/accuracy",
+                              "secret_ref": "evaluation-s3"
+                            }
+                          },
+                          "significance_level": 0.7
                         }
                       },
                       "name": "granite-3.1-8b-safety-eval",
@@ -948,6 +977,102 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/v1/evaluations/jobs/{job_id}/post-processing": {
+      "put": {
+        "tags": [
+          "Evaluations"
+        ],
+        "summary": "Configure Confidence Interval Post-Processing",
+        "description": "Configure confidence interval computation for the benchmarks in an existing\nevaluation job. The operation is idempotent: if the same job already has a\nconfidence interval computation, the existing computation is returned.\n\nThe computation runs independently for each benchmark. When\n`process_benchmarks_in_parallel` is `true`, benchmark computations may run\nin parallel; otherwise they are processed sequentially.\n",
+        "operationId": "put_evaluations_jobs_job_id_post_processing",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfidenceIntervalPostProcessingRequest"
+              },
+              "examples": {
+                "request": {
+                  "summary": "Configure confidence interval computation",
+                  "value": {
+                    "confidence_interval_config": {
+                      "process_benchmarks_in_parallel": true,
+                      "hardware_config": {
+                        "cpu": {
+                          "request": "500m",
+                          "limit": "2"
+                        },
+                        "memory": {
+                          "request": "1Gi",
+                          "limit": "4Gi"
+                        }
+                      },
+                      "calibration_data_ref": {
+                        "s3": {
+                          "bucket": "evaluation-data",
+                          "key": "calibration/accuracy",
+                          "secret_ref": "evaluation-s3"
+                        }
+                      },
+                      "significance_level": 0.7
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Existing confidence interval computation returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvaluationJobResource"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Confidence interval computation accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvaluationJobResource"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
           }
         }
       }
@@ -3141,6 +3266,35 @@
           "completed"
         ]
       },
+      "PostProcessingStatus": {
+        "type": "object",
+        "title": "PostProcessingStatus",
+        "description": "Status of a post-processing computation for one benchmark.",
+        "properties": {
+          "state": {
+            "$ref": "#/components/schemas/State"
+          },
+          "message": {
+            "$ref": "#/components/schemas/MessageInfo"
+          },
+          "error_message": {
+            "$ref": "#/components/schemas/MessageInfo"
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "RFC3339 start time of the post-processing computation."
+          },
+          "completed_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "RFC3339 completion time of the post-processing computation."
+          }
+        },
+        "required": [
+          "state"
+        ]
+      },
       "BenchmarkStatus": {
         "type": "object",
         "description": "Status of an individual benchmark in an evaluation",
@@ -3178,6 +3332,16 @@
             "type": "string",
             "format": "date-time",
             "description": "RFC3339 completion time"
+          },
+          "post_processing_status": {
+            "type": "object",
+            "description": "Status of post-processing computations for this benchmark.",
+            "properties": {
+              "confidence_interval_computation": {
+                "$ref": "#/components/schemas/PostProcessingStatus"
+              }
+            },
+            "additionalProperties": false
           }
         }
       },
@@ -3233,6 +3397,28 @@
           }
         }
       },
+      "ConfidenceInterval": {
+        "type": "object",
+        "title": "ConfidenceInterval",
+        "description": "Confidence interval for a benchmark result.",
+        "properties": {
+          "lower": {
+            "type": "number",
+            "format": "float",
+            "description": "Lower confidence interval bound."
+          },
+          "upper": {
+            "type": "number",
+            "format": "float",
+            "description": "Upper confidence interval bound."
+          }
+        },
+        "required": [
+          "lower",
+          "upper"
+        ],
+        "additionalProperties": false
+      },
       "BenchmarkTest": {
         "type": "object",
         "description": "The test result of a single benchmark run",
@@ -3250,6 +3436,10 @@
           "pass": {
             "type": "boolean",
             "description": "Whether the benchmark passed"
+          },
+          "confidence_interval": {
+            "$ref": "#/components/schemas/ConfidenceInterval",
+            "description": "Confidence interval for the benchmark's primary score."
           }
         }
       },
@@ -3368,114 +3558,6 @@
             "description": "Test result"
           }
         }
-      },
-      "ModelAuth": {
-        "type": "object",
-        "description": "The model authentication configuration",
-        "properties": {
-          "secret_ref": {
-            "type": "string",
-            "description": "The reference to the secret containing the model authentication credentials"
-          }
-        }
-      },
-      "ModelRef": {
-        "type": "object",
-        "description": "Model specification for evaluation requests",
-        "required": [
-          "name"
-        ],
-        "properties": {
-          "name": {
-            "type": "string",
-            "description": "The model name.\n"
-          },
-          "url": {
-            "type": "string",
-            "description": "The model URL.\n\nNote that if `pre_recorded_data` is set for all `test_data_ref.type`\nin the `benchmarks` section then `url` will not be `required` for the job run,\nin all other cases a `url` is required.\n"
-          },
-          "parameters": {
-            "type": "object",
-            "additionalProperties": true,
-            "description": "The model specific parameters.\n"
-          },
-          "auth": {
-            "$ref": "#/components/schemas/ModelAuth",
-            "description": "The model authentication configuration.\n"
-          }
-        }
-      },
-      "EvaluationJobConfigCommon1": {
-        "type": "object",
-        "title": "EvaluationJobConfigCommon1",
-        "description": "The evaluation job request configuration.\n",
-        "required": [
-          "name",
-          "model"
-        ],
-        "properties": {
-          "name": {
-            "type": "string",
-            "description": "The evaluation job name.\n"
-          },
-          "description": {
-            "type": "string",
-            "description": "The evaluation job description.\n"
-          },
-          "tags": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "The evaluation job tags.\n"
-          },
-          "model": {
-            "$ref": "#/components/schemas/ModelRef",
-            "description": "The model to evaluate, or the model that was used to generate the pre-recorded data.\n"
-          }
-        }
-      },
-      "Ref": {
-        "type": "object",
-        "description": "Reference by ID",
-        "required": [
-          "id"
-        ],
-        "properties": {
-          "id": {
-            "type": "string",
-            "description": "Unique identifier"
-          }
-        }
-      },
-      "PrimaryScore": {
-        "type": "object",
-        "description": "Primary score metric configuration",
-        "properties": {
-          "metric": {
-            "type": "string",
-            "description": "Metric name"
-          },
-          "lower_is_better": {
-            "type": "boolean",
-            "default": false,
-            "description": "Whether lower values indicate better performance"
-          }
-        }
-      },
-      "PassCriteria": {
-        "type": "object",
-        "description": "Pass/fail threshold criteria.",
-        "properties": {
-          "threshold": {
-            "type": "number",
-            "format": "float",
-            "description": "Threshold value."
-          }
-        },
-        "required": [
-          "threshold"
-        ]
       },
       "QueueConfig": {
         "type": "object",
@@ -3822,6 +3904,157 @@
           }
         ]
       },
+      "ConfidenceIntervalConfig": {
+        "type": "object",
+        "title": "ConfidenceIntervalConfig",
+        "description": "Configuration for confidence interval post-processing.",
+        "properties": {
+          "process_benchmarks_in_parallel": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether confidence intervals for the job's benchmarks may be computed in\nparallel. The default is false.\n"
+          },
+          "hardware_config": {
+            "$ref": "#/components/schemas/BenchmarkHardwareConfig",
+            "description": "Optional hardware override for confidence interval computation."
+          },
+          "calibration_data_ref": {
+            "$ref": "#/components/schemas/TestDataRef",
+            "description": "Reference to the labeled calibration data used by the computation."
+          },
+          "significance_level": {
+            "type": "number",
+            "format": "float",
+            "exclusiveMinimum": 0,
+            "exclusiveMaximum": 1,
+            "description": "Significance level alpha. For example, 0.7 requests a 30% confidence\ninterval.\n"
+          }
+        },
+        "required": [
+          "calibration_data_ref",
+          "significance_level"
+        ],
+        "additionalProperties": false
+      },
+      "PostProcessing": {
+        "type": "object",
+        "title": "PostProcessing",
+        "description": "Post-processing configuration associated with an evaluation job.",
+        "properties": {
+          "confidence_interval_config": {
+            "$ref": "#/components/schemas/ConfidenceIntervalConfig"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ModelAuth": {
+        "type": "object",
+        "description": "The model authentication configuration",
+        "properties": {
+          "secret_ref": {
+            "type": "string",
+            "description": "The reference to the secret containing the model authentication credentials"
+          }
+        }
+      },
+      "ModelRef": {
+        "type": "object",
+        "description": "Model specification for evaluation requests",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The model name.\n"
+          },
+          "url": {
+            "type": "string",
+            "description": "The model URL.\n\nNote that if `pre_recorded_data` is set for all `test_data_ref.type`\nin the `benchmarks` section then `url` will not be `required` for the job run,\nin all other cases a `url` is required.\n"
+          },
+          "parameters": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "The model specific parameters.\n"
+          },
+          "auth": {
+            "$ref": "#/components/schemas/ModelAuth",
+            "description": "The model authentication configuration.\n"
+          }
+        }
+      },
+      "EvaluationJobConfigCommon1": {
+        "type": "object",
+        "title": "EvaluationJobConfigCommon1",
+        "description": "The evaluation job request configuration.\n",
+        "required": [
+          "name",
+          "model"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The evaluation job name.\n"
+          },
+          "description": {
+            "type": "string",
+            "description": "The evaluation job description.\n"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The evaluation job tags.\n"
+          },
+          "model": {
+            "$ref": "#/components/schemas/ModelRef",
+            "description": "The model to evaluate, or the model that was used to generate the pre-recorded data.\n"
+          }
+        }
+      },
+      "Ref": {
+        "type": "object",
+        "description": "Reference by ID",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique identifier"
+          }
+        }
+      },
+      "PrimaryScore": {
+        "type": "object",
+        "description": "Primary score metric configuration",
+        "properties": {
+          "metric": {
+            "type": "string",
+            "description": "Metric name"
+          },
+          "lower_is_better": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether lower values indicate better performance"
+          }
+        }
+      },
+      "PassCriteria": {
+        "type": "object",
+        "description": "Pass/fail threshold criteria.",
+        "properties": {
+          "threshold": {
+            "type": "number",
+            "format": "float",
+            "description": "Threshold value."
+          }
+        },
+        "required": [
+          "threshold"
+        ]
+      },
       "EvaluationBenchmarkConfig": {
         "type": "object",
         "description": "Reference to a benchmark in an evaluation job (top-level benchmarks or collection override list).\nDoes not include a URL; URLs appear only on collection benchmark entries.\n",
@@ -4150,6 +4383,10 @@
               "results": {
                 "$ref": "#/components/schemas/EvaluationJobResults",
                 "description": "Results when completed"
+              },
+              "post_processing": {
+                "$ref": "#/components/schemas/PostProcessing",
+                "description": "Post-processing configuration for the evaluation job"
               }
             }
           },
@@ -4185,6 +4422,20 @@
             }
           }
         ]
+      },
+      "ConfidenceIntervalPostProcessingRequest": {
+        "type": "object",
+        "title": "ConfidenceIntervalPostProcessingRequest",
+        "description": "Request to configure confidence interval post-processing.",
+        "properties": {
+          "confidence_interval_config": {
+            "$ref": "#/components/schemas/ConfidenceIntervalConfig"
+          }
+        },
+        "required": [
+          "confidence_interval_config"
+        ],
+        "additionalProperties": false
       },
       "AgentMetadata": {
         "type": "object",

@@ -12,3 +12,6 @@ properties:
   pass:
     type: boolean
     description: Whether the benchmark passed
+  confidence_interval:
+    $ref: ./ConfidenceInterval.yaml
+    description: Confidence interval for the benchmark's primary score.
