@@ -14,6 +14,7 @@ import (
 
 	"github.com/eval-hub/eval-hub/internal/eval_hub/server"
 	pkgapi "github.com/eval-hub/eval-hub/pkg/api"
+	"github.com/google/uuid"
 
 	"github.com/cucumber/godog"
 )
@@ -407,6 +408,7 @@ func (tc *scenarioConfig) ociIsConfigured() error {
 
 func (tc *scenarioConfig) saveScenarioName(ctx context.Context, sc *godog.Scenario) (context.Context, error) {
 	tc.scenarioName = sc.Name
+	tc.values["scenario_id"] = uuid.NewString()
 	tc.jsonnetQueueEnabled = nil
 	return ctx, nil
 }
@@ -428,6 +430,9 @@ func (tc *scenarioConfig) assetCleanup(ctx context.Context, sc *godog.Scenario, 
 			url = "evaluations/jobs"
 			hardDelete = true
 		case "jobs":
+			url = "evaluations/jobs"
+			hardDelete = true
+		case "post-processing":
 			url = "evaluations/jobs"
 			hardDelete = true
 		case "collections":
