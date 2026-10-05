@@ -36,6 +36,17 @@ func TestBundledClassificationMetadata(t *testing.T) {
 		}
 	}
 
+	internalProvider, ok := providers["evalhub-internal"]
+	if !ok {
+		t.Fatal("missing evalhub-internal provider")
+	}
+	if !internalProvider.InternalOnly {
+		t.Error("evalhub-internal must be marked internal_only")
+	}
+	if len(internalProvider.Benchmarks) != 1 || internalProvider.Benchmarks[0].ID != "evaluation-post-processor" {
+		t.Errorf("unexpected internal provider benchmarks: %+v", internalProvider.Benchmarks)
+	}
+
 	collections, err := config.LoadCollectionConfigs(logger, validate, configDir)
 	if err != nil {
 		t.Fatalf("load bundled collections: %v", err)

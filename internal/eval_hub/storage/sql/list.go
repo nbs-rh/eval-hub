@@ -115,8 +115,8 @@ func scanResource[T api.EvaluationJobResource | api.ProviderResource | api.Colle
 			return &t, err
 		}
 	case shared.TableProviders:
-		storedEntity := api.ProviderConfig{}
-		err = json.Unmarshal([]byte(query.EntityJSON), &storedEntity)
+		storedEntity, decodeErr := decodeProviderConfig([]byte(query.EntityJSON))
+		err = decodeErr
 		if err == nil {
 			resource := &api.ProviderResource{
 				Resource:       query.Resource,

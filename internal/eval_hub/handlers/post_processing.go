@@ -25,6 +25,10 @@ func (h *Handlers) HandleCreatePostProcessing(ctx *executioncontext.ExecutionCon
 		return
 	}
 	if operation := request.Operations.ConfidenceInterval; operation != nil {
+		if source := operation.ResultsDataRef; source != nil && source.EvalJob != nil && source.EvalJob.NumParallelThreads == nil {
+			defaultThreads := 1
+			source.EvalJob.NumParallelThreads = &defaultThreads
+		}
 		if err := h.validatePostProcessingResultsSource(ctx, operation.ResultsDataRef); err != nil {
 			w.Error(err, ctx.RequestID)
 			return

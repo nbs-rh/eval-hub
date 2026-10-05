@@ -125,6 +125,7 @@ func (s *updatePatchProviderStorage) PatchProvider(id string, patches *api.Patch
 type listProvidersStorage struct {
 	*fakeStorage
 	providers []api.ProviderResource
+	filter    *abstractions.QueryFilter
 	err       error
 }
 
@@ -135,7 +136,8 @@ func (s *listProvidersStorage) WithContext(_ context.Context) abstractions.Stora
 func (s *listProvidersStorage) WithTenant(_ api.Tenant) abstractions.Storage { return s }
 func (s *listProvidersStorage) WithOwner(_ api.User) abstractions.Storage    { return s }
 
-func (s *listProvidersStorage) GetProviders(_ *abstractions.QueryFilter) (*abstractions.QueryResults[api.ProviderResource], error) {
+func (s *listProvidersStorage) GetProviders(filter *abstractions.QueryFilter) (*abstractions.QueryResults[api.ProviderResource], error) {
+	s.filter = filter
 	if s.err != nil {
 		return nil, s.err
 	}

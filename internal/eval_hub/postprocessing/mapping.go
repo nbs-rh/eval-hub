@@ -9,8 +9,8 @@ import (
 )
 
 const (
-	ProviderID  = "eval_hub_internal"
-	BenchmarkID = "evaluation_post_processor"
+	ProviderID  = "evalhub-internal"
+	BenchmarkID = "evaluation-post-processor"
 )
 
 // IsPostProcessingJob recognizes the single benchmark used to execute post-processing.

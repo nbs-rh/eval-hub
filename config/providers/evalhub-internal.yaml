@@ -1,0 +1,35 @@
+id: evalhub-internal
+internal_only: true
+name: EvalHub Internal
+title: EvalHub Internal
+description: Internal runtime provider for server-managed post-processing computations.
+tags:
+  - internal
+runtime:
+  k8s:
+    image: quay.io/evalhub/evalhub-post-processor:latest
+    entrypoint:
+      - python
+      - main.py
+    cpu_request: 500m
+    memory_request: 1Gi
+    cpu_limit: "2"
+    memory_limit: 4Gi
+  local:
+    command: python tests/features/test_data/runtime/main.py
+benchmarks:
+  - id: evaluation-post-processor
+    name: Evaluation Post Processor
+    description: Computes post-processing outputs for completed evaluations without model inference.
+    category: post_processing
+    domains:
+      - post_processing
+    tasks:
+      - post_processing
+    modalities:
+      - tabular
+    evaluation_targets:
+      - model
+    metrics: []
+    tags:
+      - internal

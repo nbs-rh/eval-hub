@@ -149,8 +149,8 @@ func (s *sqlStorage) LoadSystemResources(systemCollections map[string]api.Collec
 }
 
 func systemProviderConfigEqual(existing, next api.ProviderResource) bool {
-	a, errA := json.Marshal(existing.ProviderConfig)
-	b, errB := json.Marshal(next.ProviderConfig)
+	a, errA := encodeProviderConfig(existing.ProviderConfig)
+	b, errB := encodeProviderConfig(next.ProviderConfig)
 	if errA != nil || errB != nil {
 		return false
 	}

@@ -96,7 +96,7 @@ func (s *postgresStatementsFactory) GetAllowedFilterColumns(tableName string) []
 	case shared.TableEvaluations:
 		return append(allColumns, "status", "experiment_id", "collection_id")
 	case shared.TableProviders:
-		return allColumns // "benchmarks" and "scope" are not allowed filters for providers from the database
+		return append(allColumns, "internal_only") // "benchmarks" and "scope" are not allowed filters for providers from the database
 	case shared.TableCollections:
 		return append(allColumns, "category", "domains", "tasks", "modalities", "industries", "evaluation_targets")
 	default:
@@ -110,6 +110,11 @@ func (s *postgresStatementsFactory) GetAllowedFilterColumns(tableName string) []
 // The arrow-text operator ->> returns the object field as plain text.
 func (s *postgresStatementsFactory) CreateEntityFilterCondition(key string, value any, index int, tableName string) (condition string, args []any) {
 	switch key {
+	case "internal_only":
+		if internalOnly, ok := value.(bool); ok && !internalOnly {
+			return "entity->>'internal_only' IS DISTINCT FROM 'true'", []any{}
+		}
+		return fmt.Sprintf("entity->>'internal_only' = $%d", index), []any{value}
 	case "name":
 		// evaluations: name at config.name; providers and collections: name at entity root
 		namePath := "entity->>'name'"

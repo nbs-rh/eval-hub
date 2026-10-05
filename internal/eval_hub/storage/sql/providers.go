@@ -13,6 +13,24 @@ import (
 	jsonpatch "gopkg.in/evanphx/json-patch.v4"
 )
 
+type providerStorageEntity struct {
+	api.ProviderConfig
+	InternalOnly bool `json:"internal_only,omitempty"`
+}
+
+func encodeProviderConfig(providerConfig api.ProviderConfig) ([]byte, error) {
+	return json.Marshal(providerStorageEntity{ProviderConfig: providerConfig, InternalOnly: providerConfig.InternalOnly})
+}
+
+func decodeProviderConfig(data []byte) (api.ProviderConfig, error) {
+	var stored providerStorageEntity
+	if err := json.Unmarshal(data, &stored); err != nil {
+		return api.ProviderConfig{}, err
+	}
+	stored.ProviderConfig.InternalOnly = stored.InternalOnly
+	return stored.ProviderConfig, nil
+}
+
 func (s *sqlStorage) CreateProvider(provider *api.ProviderResource) error {
 	return s.createProviderTxn(nil, provider)
 }
@@ -40,7 +58,7 @@ func (s *sqlStorage) createProviderTxn(txn *sql.Tx, provider *api.ProviderResour
 }
 
 func (s *sqlStorage) createProviderEntity(provider *api.ProviderResource) ([]byte, error) {
-	providerJSON, err := json.Marshal(provider.ProviderConfig)
+	providerJSON, err := encodeProviderConfig(provider.ProviderConfig)
 	if err != nil {
 		return nil, se.NewServiceError(messages.InternalServerError, "Error", err.Error())
 	}
@@ -70,8 +88,7 @@ func (s *sqlStorage) getUserProviderTransactional(txn *sql.Tx, id string) (*api.
 		return nil, se.NewServiceError(messages.ResourceNotFound, "Type", "provider", "ResourceId", id)
 	}
 
-	var providerConfig api.ProviderConfig
-	err = json.Unmarshal([]byte(query.EntityJSON), &providerConfig)
+	providerConfig, err := decodeProviderConfig([]byte(query.EntityJSON))
 	if err != nil {
 		s.logger.Error("Failed to unmarshal provider config", "error", err, "id", id)
 		return nil, se.NewServiceError(messages.JSONUnmarshalFailed, "Type", "provider", "Error", err.Error())

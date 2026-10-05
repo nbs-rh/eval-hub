@@ -85,7 +85,7 @@ func (s *sqliteStatementsFactory) GetAllowedFilterColumns(tableName string) []st
 	case shared.TableEvaluations:
 		return append(allColumns, "status", "experiment_id", "collection_id")
 	case shared.TableProviders:
-		return allColumns // "benchmarks" and "scope" are not allowed filters for providers from the database
+		return append(allColumns, "internal_only") // "benchmarks" and "scope" are not allowed filters for providers from the database
 	case shared.TableCollections:
 		return append(allColumns, "category", "domains", "tasks", "modalities", "industries", "evaluation_targets")
 	default:
@@ -110,6 +110,11 @@ func (s *sqliteStatementsFactory) CreateEvaluationGetEntityForUpdateStatement(qu
 // entityFilterCondition returns the SQL condition and args for a filter key.
 func (s *sqliteStatementsFactory) CreateEntityFilterCondition(key string, value any, index int, tableName string) (condition string, args []any) {
 	switch key {
+	case "internal_only":
+		if internalOnly, ok := value.(bool); ok && !internalOnly {
+			return "COALESCE(json_extract(entity, '$.internal_only'), 0) = 0", []any{}
+		}
+		return "json_extract(entity, '$.internal_only') = ?", []any{value}
 	case "name":
 		// evaluations: name at config.name; providers and collections: name at entity root
 		namePath := "$.name"

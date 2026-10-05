@@ -144,6 +144,10 @@ func (h *Handlers) HandleListProviders(ctx *executioncontext.ExecutionContext, r
 				return err
 			}
 
+			if filter.Params == nil {
+				filter.Params = make(map[string]any)
+			}
+			filter.Params["internal_only"] = false
 			ofilter = filter
 			return nil
 		},
@@ -165,6 +169,21 @@ func (h *Handlers) HandleListProviders(ctx *executioncontext.ExecutionContext, r
 			if err != nil {
 				w.Error(err, ctx.RequestID)
 				return err
+			}
+
+			publicProviders := providers.Items[:0]
+			hiddenCount := 0
+			for _, provider := range providers.Items {
+				if provider.InternalOnly {
+					hiddenCount++
+					continue
+				}
+				publicProviders = append(publicProviders, provider)
+			}
+			providers.Items = publicProviders
+			providers.TotalCount -= hiddenCount
+			if providers.TotalCount < 0 {
+				providers.TotalCount = 0
 			}
 
 			if !benchmarks {
@@ -212,6 +231,11 @@ func (h *Handlers) HandleGetProvider(ctx *executioncontext.ExecutionContext, req
 		func(runtimeCtx context.Context) error {
 			provider, err := storage.WithContext(runtimeCtx).GetProvider(providerID)
 			if err != nil {
+				w.Error(err, ctx.RequestID)
+				return err
+			}
+			if provider.InternalOnly {
+				err := serviceerrors.NewServiceError(messages.ResourceNotFound, "Type", "provider", "ResourceId", providerID)
 				w.Error(err, ctx.RequestID)
 				return err
 			}

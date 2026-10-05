@@ -56,13 +56,15 @@ type BenchmarkResource struct {
 }
 
 type ProviderConfig struct {
-	Name        string              `mapstructure:"name" yaml:"name" json:"name"`
-	Description string              `mapstructure:"description" yaml:"description" json:"description,omitempty" validate:"omitempty,max=1024,min=1"`
-	Title       string              `mapstructure:"title" yaml:"title" json:"title"`
-	Tags        []string            `mapstructure:"tags" yaml:"tags" json:"tags,omitempty" validate:"omitempty,dive,tagname"`
-	Benchmarks  []BenchmarkResource `mapstructure:"benchmarks" yaml:"benchmarks" json:"benchmarks" validate:"dive"`
-	Runtime     *Runtime            `mapstructure:"runtime" yaml:"runtime" json:"runtime,omitempty"`
-	Agent       *AgentMetadata      `mapstructure:"agent" yaml:"agent" json:"agent,omitempty"`
+	// InternalOnly marks built-in providers that are usable by server workflows but hidden from provider APIs.
+	InternalOnly bool                `mapstructure:"internal_only" yaml:"internal_only" json:"-" validate:"-"`
+	Name         string              `mapstructure:"name" yaml:"name" json:"name"`
+	Description  string              `mapstructure:"description" yaml:"description" json:"description,omitempty" validate:"omitempty,max=1024,min=1"`
+	Title        string              `mapstructure:"title" yaml:"title" json:"title"`
+	Tags         []string            `mapstructure:"tags" yaml:"tags" json:"tags,omitempty" validate:"omitempty,dive,tagname"`
+	Benchmarks   []BenchmarkResource `mapstructure:"benchmarks" yaml:"benchmarks" json:"benchmarks" validate:"dive"`
+	Runtime      *Runtime            `mapstructure:"runtime" yaml:"runtime" json:"runtime,omitempty"`
+	Agent        *AgentMetadata      `mapstructure:"agent" yaml:"agent" json:"agent,omitempty"`
 }
 
 type ProviderResource struct {

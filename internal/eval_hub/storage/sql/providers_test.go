@@ -8,6 +8,69 @@ import (
 	"github.com/eval-hub/eval-hub/pkg/api"
 )
 
+func TestProviderStorageHidesInternalProvidersBeforePagination(t *testing.T) {
+	store, err := getTestStorage(t, "sqlite", getDBName())
+	if err != nil {
+		t.Fatalf("create storage: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	providers := map[string]api.ProviderResource{
+		"public-provider": {
+			Resource:       api.Resource{ID: "public-provider", Owner: "system"},
+			ProviderConfig: api.ProviderConfig{Name: "Public Provider"},
+		},
+		"evalhub-internal": {
+			Resource: api.Resource{ID: "evalhub-internal", Owner: "system"},
+			ProviderConfig: api.ProviderConfig{
+				Name:         "EvalHub Internal",
+				InternalOnly: true,
+			},
+		},
+	}
+	if err := store.LoadSystemResources(nil, providers); err != nil {
+		t.Fatalf("load system providers: %v", err)
+	}
+
+	internal, err := store.GetProvider("evalhub-internal")
+	if err != nil {
+		t.Fatalf("get internal provider for runtime use: %v", err)
+	}
+	if !internal.InternalOnly {
+		t.Fatal("internal_only marker was not persisted")
+	}
+
+	page, err := store.GetProviders(&abstractions.QueryFilter{
+		Limit:  1,
+		Offset: 0,
+		Params: map[string]any{
+			"scope":         abstractions.ScopeSystem,
+			"internal_only": false,
+		},
+	})
+	if err != nil {
+		t.Fatalf("list public providers: %v", err)
+	}
+	if page.TotalCount != 1 || len(page.Items) != 1 || page.Items[0].Resource.ID != "public-provider" {
+		t.Fatalf("expected only public provider on first page, got total=%d items=%+v", page.TotalCount, page.Items)
+	}
+
+	nextPage, err := store.GetProviders(&abstractions.QueryFilter{
+		Limit:  1,
+		Offset: 1,
+		Params: map[string]any{
+			"scope":         abstractions.ScopeSystem,
+			"internal_only": false,
+		},
+	})
+	if err != nil {
+		t.Fatalf("list public providers page 2: %v", err)
+	}
+	if nextPage.TotalCount != 1 || len(nextPage.Items) != 0 {
+		t.Fatalf("unexpected second public-provider page: total=%d items=%+v", nextPage.TotalCount, nextPage.Items)
+	}
+}
+
 func TestProviderStorage(t *testing.T) {
 	tenant := api.Tenant("tenant-1")
 	store, err := getTestStorage(t, "sqlite", getDBName())
