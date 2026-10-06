@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -91,6 +92,75 @@ func TestPushEvaluationCard(t *testing.T) {
 	}
 	if got.Config.Annotations[AnnotationImageTitle] != "evaluation-card-job-1-config.json" {
 		t.Fatalf("config title = %q", got.Config.Annotations[AnnotationImageTitle])
+	}
+}
+
+func TestPushDataArchive(t *testing.T) {
+	t.Parallel()
+
+	var uploadedManifest []byte
+	var blobs = make(map[string][]byte)
+	var mu sync.Mutex
+	uploadNumber := 0
+	srv, httpClient := startTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v2":
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodHead && strings.HasPrefix(r.URL.Path, "/v2/test-org/test-repo/blobs/"):
+			w.WriteHeader(http.StatusNotFound)
+		case r.Method == http.MethodPost && r.URL.Path == "/v2/test-org/test-repo/blobs/uploads/":
+			mu.Lock()
+			uploadNumber++
+			id := uploadNumber
+			mu.Unlock()
+			w.Header().Set("Location", fmt.Sprintf("/v2/test-org/test-repo/blobs/uploads/upload-%d", id))
+			w.WriteHeader(http.StatusAccepted)
+		case r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/blobs/uploads/"):
+			payload, _ := io.ReadAll(r.Body)
+			mu.Lock()
+			blobs[r.URL.Query().Get("digest")] = payload
+			mu.Unlock()
+			w.WriteHeader(http.StatusCreated)
+		case r.Method == http.MethodPut && r.URL.Path == "/v2/test-org/test-repo/manifests/ppi-fixture":
+			mu.Lock()
+			uploadedManifest, _ = io.ReadAll(r.Body)
+			mu.Unlock()
+			w.WriteHeader(http.StatusCreated)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	client, err := NewClient(srv.URL, "test-org/test-repo", Credentials{}, httpClient)
+	if err != nil {
+		t.Fatalf("NewClient() err = %v", err)
+	}
+	archive := []byte("fixture archive")
+	if err := client.PushDataArchive(context.Background(), "ppi-fixture", archive); err != nil {
+		t.Fatalf("PushDataArchive() err = %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(uploadedManifest) == 0 {
+		t.Fatal("expected data artifact manifest upload")
+	}
+	var got manifest
+	if err := json.Unmarshal(uploadedManifest, &got); err != nil {
+		t.Fatalf("unmarshal manifest: %v", err)
+	}
+	if got.MediaType != MediaTypeImageManifest {
+		t.Fatalf("manifest mediaType = %q", got.MediaType)
+	}
+	if len(got.Layers) != 1 || got.Layers[0].MediaType != "application/vnd.oci.image.layer.v1.tar+gzip" {
+		t.Fatalf("layers = %#v", got.Layers)
+	}
+	layerSum := sha256.Sum256(archive)
+	wantLayerDigest := "sha256:" + hex.EncodeToString(layerSum[:])
+	if got.Layers[0].Digest != wantLayerDigest {
+		t.Fatalf("layer digest = %q want %q", got.Layers[0].Digest, wantLayerDigest)
+	}
+	if !bytes.Equal(blobs[wantLayerDigest], archive) {
+		t.Fatalf("uploaded layer = %q, want archive bytes", blobs[wantLayerDigest])
 	}
 }
 

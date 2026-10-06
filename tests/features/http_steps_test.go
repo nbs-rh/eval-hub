@@ -248,6 +248,58 @@ func (tc *scenarioConfig) iWaitForEvaluationJobStatusByID(jobIDExpr, expectedSta
 	return tc.logError(fmt.Errorf("timed out after %v waiting for status %q, last status: %q", tc.waitDeadline, expectedStatus, lastStatus))
 }
 
+func (tc *scenarioConfig) iWaitForStandalonePostProcessingStatusByID(idExpr, expectedStatus string) error {
+	id := tc.lastId
+	if strings.TrimSpace(idExpr) != "" && idExpr != "{id}" {
+		resolved, err := tc.getValue(idExpr)
+		if err != nil {
+			return err
+		}
+		id = resolved
+	}
+	if id == "" {
+		return tc.logError(fmt.Errorf("post-processing ID is empty for %q", idExpr))
+	}
+	prevID := tc.lastId
+	tc.lastId = id
+	defer func() { tc.lastId = prevID }()
+
+	deadline := time.Now().Add(tc.waitDeadline)
+	var lastErr error
+	var lastStatus string
+	for time.Now().Before(deadline) {
+		if err := tc.iSendARequestImpl(http.MethodGet, "/api/v1/evaluations/post-processing/{id}", "", "wait for standalone post-processing status"); err != nil {
+			lastErr = err
+			time.Sleep(tc.waitInterval)
+			continue
+		}
+		if tc.response != nil && tc.response.StatusCode == http.StatusOK {
+			status, err := tc.getJsonPath("$.status.state")
+			if status != "" {
+				lastStatus = status
+			}
+			if err != nil {
+				lastErr = err
+			} else if status == expectedStatus {
+				return nil
+			} else if pkgapi.OverallState(status).IsTerminalState() {
+				message, _ := tc.getJsonPath("$.status.error_message.message")
+				if message != "" {
+					return tc.logError(fmt.Errorf("standalone post-processing reached terminal state %q (expected %q): %s", status, expectedStatus, message))
+				}
+				return tc.logError(fmt.Errorf("standalone post-processing reached terminal state %q (expected %q)", status, expectedStatus))
+			}
+		} else if tc.response != nil {
+			lastErr = tc.logError(fmt.Errorf("unexpected response status %d while waiting for standalone post-processing", tc.response.StatusCode))
+		}
+		time.Sleep(tc.waitInterval)
+	}
+	if lastErr != nil {
+		return tc.logError(lastErr)
+	}
+	return tc.logError(fmt.Errorf("timed out after %v waiting for standalone post-processing status %q, last status: %q", tc.waitDeadline, expectedStatus, lastStatus))
+}
+
 func (tc *scenarioConfig) iSendARequestToWithInlineBody(method, path string, body *godog.DocString) error {
 	if body == nil {
 		return tc.logError(fmt.Errorf("inline body is missing"))

@@ -100,6 +100,69 @@ When running in local server mode, the tests will:
 | `@hf` | Evaluation jobs that download offline test data from Hugging Face Hub (`evaluation_jobs.feature`). Defaults: `TEST_DATA_HF_REPO_ID`=`eval-hub-test/evalhub-offline-testdata`, `TEST_DATA_HF_REVISION`=`main`, nested `truthfulqa_mc1` via `TEST_DATA_HF_NESTED_SUB_PATH`=`staging_sub_path` (public mirror of `tests/git-testdata` on HF). One happy-path job runs `arc_easy` (full repo, branch revision) + `truthfulqa_mc1` (nested `sub_path`) and asserts `resolved_sha` is absent on create then populated after completion; set `TEST_DATA_HF_SHA_REVISION` to a real hex commit SHA to exercise pinned revision on `arc_easy` without a separate scenario. Runtime failures: one job covers invalid `repo_id` + bad `revision`; missing `sub_path` stays a separate job. Optional env: `TEST_DATA_HF_BAD_REPO_ID` (default `eval-hub-test/invalid-db`), `TEST_DATA_HF_BAD_REVISION`, `TEST_DATA_HF_BAD_SUB_PATH`. Job-wait negatives poll every 10s for up to 5m; API-only negatives return 400 immediately. Requires cluster egress to huggingface.co (or configure the init image with `HF_ENDPOINT` for a mirror). Opt in with `GODOG_TAGS="@hf"`. |
 | `@gha-wheel-sanity` | Local-runtime wheel validation scenario run by `scripts/gha_wheel_sanity_test.sh` during GHA wheel checks |
 
+### Standalone post-processing source E2E (`@post_processing_e2e`)
+
+The outline in `standalone_post_processing.feature` covers the six standalone
+results sources (`S3`, `PVC`, `Git`, `HF`, `MLFlow`, `OCI`) and all four
+calibration sources (`S3`, `PVC`, `Git`, `HF`). It includes Inspect, LightEval,
+RAGAS, and RULER, plus Clear, DeepEval, GuideLLM, MTEB, NeMo Guardrails, and
+SWE-bench where the framework table reports stored or exported results. Each
+row seeds its sources, submits a post-processing job, polls the standalone GET
+endpoint until completion, and checks that the response has finite ordered
+confidence-interval bounds.
+
+The fixtures contain two evaluation predictions and two calibration examples,
+each with a label/prediction pair. Files use the framework artifact paths from
+the matrix and normalized sample records so the test can exercise the
+post-processor consistently.
+Frameworks whose native exports contain aggregate metrics only receive a
+synthetic per-row fixture at that export path; this validates source loading
+and the API flow, not row-level retention by the framework itself.
+
+These tests require a cluster-backed `SERVER_URL`, a Kubernetes context able
+to access the tenant namespace, `AUTH_TOKEN`, `X_TENANT`, and a configured
+`MLFLOW_TRACKING_URI`. The runner also needs permission to read the configured
+S3, OCI, and Hugging Face Secrets, create ConfigMaps and Jobs, and read Jobs.
+The tenant must have the `TEST_POST_PROCESSING_PVC_CLAIM` PVC. Cluster egress
+must reach the configured object stores, OCI registry, Git host, Hugging Face
+Hub, and MLflow service.
+
+The fixture step writes unique S3 objects, MLflow runs, OCI tags, Hugging Face
+files, and PVC paths. It creates the default public Hugging Face dataset
+`eval-hub-test/evalhub-post-processing-e2e` if needed; set
+`TEST_POST_PROCESSING_HF_REPO_ID` to a writable dataset repo you control to use
+another destination. The runner obtains the upload token from `HF_TOKEN` or
+the `huggingface-credentials` Secret (`HF_TOKEN` or `token` key). The small
+fixture data is synthetic. Git fixtures are checked in under
+`tests/git-testdata/post_processing` and must be present on the remote ref used
+by the job pods; the default is the checked-out branch, with
+`TEST_POST_PROCESSING_GIT_URL` and `TEST_POST_PROCESSING_GIT_REF` available to
+override it. External fixture objects and completed post-processing records
+are retained after a run.
+
+Optional source settings:
+
+| Variable | Default |
+| --- | --- |
+| `TEST_POST_PROCESSING_S3_SECRET` | `inspect-test-data-s3` |
+| `TEST_POST_PROCESSING_S3_BUCKET` | `TEST_DATA_S3_BUCKET`, then `mlpipeline` |
+| `TEST_POST_PROCESSING_S3_ENDPOINT` | `AWS_S3_ENDPOINT` from the configured Secret |
+| `TEST_POST_PROCESSING_PVC_CLAIM` | `TEST_DATA_PVC_CLAIM_NAME`, then `ppi-e2e-calibration` |
+| `TEST_POST_PROCESSING_SEEDER_IMAGE` | `busybox:1.36.1` |
+| `TEST_POST_PROCESSING_GIT_URL` | `TEST_DATA_GIT_URL`, then eval-hub/eval-hub |
+| `TEST_POST_PROCESSING_GIT_REF` | `GITHUB_HEAD_REF`, current branch, then `TEST_DATA_GIT_REF` or `main` |
+| `TEST_POST_PROCESSING_HF_REPO_ID` | `eval-hub-test/evalhub-post-processing-e2e` |
+| `TEST_POST_PROCESSING_HF_REVISION` | `main` |
+| `TEST_POST_PROCESSING_OCI_REGISTRY` | `OCI_REGISTRY`, then the registry in the selected Secret |
+| `TEST_POST_PROCESSING_OCI_REPOSITORY` | `OCI_REPOSITORY`, then `rh-ee-nbs/nbs-dev` |
+| `TEST_POST_PROCESSING_OCI_SECRET` | `OCI_SECRET_NAME`, then the existing same-tenant Secret (`oci-credentials` in `sagar`; `my-oci-credentials` in `prabhu`) |
+
+Run only this matrix with:
+
+```bash
+GODOG_TAGS="@post_processing_e2e" go test ./tests/features/...
+```
+
 ### Metrics tests (`@metrics`)
 
 Prometheus metrics are served on a **dedicated port** (default `8081`) and are scraped directly, not through kube-rbac-proxy. API requests continue to use `SERVER_URL`; scrape requests use `METRICS_URL`.

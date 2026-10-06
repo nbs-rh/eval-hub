@@ -100,6 +100,13 @@ func buildEnvVars(jc *jobConfig, serviceConfig *config.Config) []corev1.EnvVar {
 		})
 		seen[envPostProcessorPVCMountsName] = true
 	}
+	if len(jc.postProcessorSecrets) > 0 {
+		env = append(env, corev1.EnvVar{
+			Name:  envPostProcessorSecretRootName,
+			Value: postProcessorSecretMountPathRoot,
+		})
+		seen[envPostProcessorSecretRootName] = true
+	}
 
 	// Set MLFLOW_TRACKING_SERVER_CERT_PATH so mlflow's tracking client trusts the
 	// same CA bundle the sidecar uses (operator-merged MLflow CA, else service CA).
