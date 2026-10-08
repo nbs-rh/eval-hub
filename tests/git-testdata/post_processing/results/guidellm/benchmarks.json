@@ -1,0 +1,1 @@
+{"primary_score":{"metric":"accuracy"},"estimand":"mean","samples":[{"sample_id":"eval-001","prediction":0.65},{"sample_id":"eval-002","prediction":0.8}]}

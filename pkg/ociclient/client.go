@@ -113,6 +113,54 @@ func (c *Client) PushEvaluationCard(ctx context.Context, jobID string, cardJSON 
 	return nil
 }
 
+// PushDataArchive publishes a gzip-compressed tar archive as a generic OCI data artifact.
+// The standalone post-processor can address files inside this layer by relative artifact_path.
+func (c *Client) PushDataArchive(ctx context.Context, tag string, archive []byte) error {
+	tag = strings.TrimSpace(tag)
+	if tag == "" {
+		return fmt.Errorf("manifest tag is required")
+	}
+	if len(archive) == 0 {
+		return fmt.Errorf("data archive is empty")
+	}
+
+	configBlob := []byte(`{"created_by":"eval-hub-post-processing-fvt"}`)
+	configDigest, configSize, err := c.ensureBlob(ctx, configBlob)
+	if err != nil {
+		return fmt.Errorf("upload data artifact config: %w", err)
+	}
+	layerDigest, layerSize, err := c.ensureBlob(ctx, archive)
+	if err != nil {
+		return fmt.Errorf("upload data artifact layer: %w", err)
+	}
+
+	manifestBytes, err := json.Marshal(manifest{
+		SchemaVersion: 2,
+		MediaType:     MediaTypeImageManifest,
+		Config: descriptor{
+			MediaType: MediaTypeArtifactConfig,
+			Size:      configSize,
+			Digest:    configDigest,
+		},
+		Layers: []descriptor{{
+			MediaType: "application/vnd.oci.image.layer.v1.tar+gzip",
+			Size:      layerSize,
+			Digest:    layerDigest,
+			Annotations: map[string]string{
+				AnnotationImageTitle: tag + ".tar.gz",
+			},
+		}},
+		Annotations: map[string]string{AnnotationImageTitle: tag},
+	})
+	if err != nil {
+		return fmt.Errorf("marshal data artifact manifest: %w", err)
+	}
+	if err := c.putManifest(ctx, tag, manifestBytes); err != nil {
+		return fmt.Errorf("push data artifact manifest: %w", err)
+	}
+	return nil
+}
+
 // UploadBlob streams content to the registry using chunked PATCH uploads. The digest is computed
 // while reading, so callers do not need to buffer the entire payload in memory. When KnownDigest is
 // set and the blob already exists, the upload is skipped.

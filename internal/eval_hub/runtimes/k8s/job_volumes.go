@@ -201,9 +201,9 @@ func buildRuntimeContainerVolumesAndMounts(configMap string, cfg *jobConfig) ([]
 		})
 	}
 
-	// Post-processing calibration PVCs are independent of benchmark test data.
-	// They are mounted read-only in the adapter container, which receives a
-	// claim-name-to-path map through EVALHUB_POST_PROCESSOR_PVC_MOUNTS.
+	// Post-processing PVCs are independent of benchmark test data. Result and
+	// calibration claims are mounted read-only in the adapter container, which
+	// receives a claim-name-to-path map through EVALHUB_POST_PROCESSOR_PVC_MOUNTS.
 	for _, pvc := range cfg.postProcessorPVCs {
 		volumes = append(volumes, corev1.Volume{
 			Name: pvc.volumeName,
@@ -217,6 +217,23 @@ func buildRuntimeContainerVolumesAndMounts(configMap string, cfg *jobConfig) ([]
 		volumeMounts = append(volumeMounts, corev1.VolumeMount{
 			Name:      pvc.volumeName,
 			MountPath: pvc.mountPath,
+			ReadOnly:  true,
+		})
+	}
+
+	// S3, Git, and Hugging Face credentials are projected only into the adapter
+	// that reads these post-processing sources. Each Secret is mounted in its
+	// own directory so its keys retain the names expected by the source reader.
+	for _, secret := range cfg.postProcessorSecrets {
+		volumes = append(volumes, corev1.Volume{
+			Name: secret.volumeName,
+			VolumeSource: corev1.VolumeSource{
+				Secret: &corev1.SecretVolumeSource{SecretName: secret.secretName},
+			},
+		})
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{
+			Name:      secret.volumeName,
+			MountPath: secret.mountPath,
 			ReadOnly:  true,
 		})
 	}

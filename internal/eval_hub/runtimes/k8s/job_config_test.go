@@ -1536,6 +1536,9 @@ func TestPostProcessorPVCConfigs(t *testing.T) {
 									{PVC: &api.PVCTestDataRef{ClaimName: "calibration-a"}},
 								},
 							},
+							ResultsDataRef: &api.PostProcessingResultsDataRef{
+								PVC: &api.PVCTestDataRef{ClaimName: "results"},
+							},
 						},
 					},
 				},
@@ -1547,24 +1550,73 @@ func TestPostProcessorPVCConfigs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("postProcessorPVCConfigs: %v", err)
 	}
-	if len(configs) != 2 {
-		t.Fatalf("got %d PVC configs, want 2", len(configs))
+	if len(configs) != 3 {
+		t.Fatalf("got %d PVC configs, want 3", len(configs))
 	}
 	want := []postProcessorPVCConfig{
 		{
+			claimName:  "results",
+			volumeName: postProcessorPVCVolumeNamePrefix + "0",
+			mountPath:  postProcessorPVCMountPathPrefix + "/results",
+		},
+		{
 			claimName:  "calibration-a",
-			volumeName: postProcessorCalibrationPVCVolumeNamePrefix + "0",
-			mountPath:  postProcessorCalibrationPVCMountPathPrefix + "/calibration-a",
+			volumeName: postProcessorPVCVolumeNamePrefix + "1",
+			mountPath:  postProcessorPVCMountPathPrefix + "/calibration-a",
 		},
 		{
 			claimName:  "calibration-b",
-			volumeName: postProcessorCalibrationPVCVolumeNamePrefix + "1",
-			mountPath:  postProcessorCalibrationPVCMountPathPrefix + "/calibration-b",
+			volumeName: postProcessorPVCVolumeNamePrefix + "2",
+			mountPath:  postProcessorPVCMountPathPrefix + "/calibration-b",
 		},
 	}
 	for i := range want {
 		if configs[i] != want[i] {
 			t.Errorf("config[%d] = %#v, want %#v", i, configs[i], want[i])
+		}
+	}
+}
+
+func TestPostProcessorSecretConfigs(t *testing.T) {
+	evaluation := &api.EvaluationJobResource{
+		EvaluationJobConfig: api.EvaluationJobConfig{
+			Benchmarks: []api.EvaluationBenchmarkConfig{{
+				Ref:        api.Ref{ID: "evaluation_post_processor"},
+				ProviderID: "eval_hub_internal",
+				Parameters: map[string]any{
+					"operations": api.StandalonePostProcessingOperations{
+						ConfidenceInterval: &api.StandaloneConfidenceIntervalConfig{
+							ResultsDataRef: &api.PostProcessingResultsDataRef{
+								Git: &api.GitTestDataRef{URL: "https://example.org/results.git", Ref: "main", SecretRef: "git-shared"},
+							},
+							ConfidenceIntervalConfigCommon: api.ConfidenceIntervalConfigCommon{
+								CalibrationDataRef: []api.CalibrationDataRef{
+									{S3: &api.S3TestDataRef{Bucket: "calibration", Key: "labels.jsonl", SecretRef: "s3-results"}},
+									{HF: &api.HFTestDataRef{RepoID: "org/data", SecretRef: "hf-secret"}},
+								},
+							},
+						},
+					},
+				},
+			}},
+		},
+	}
+
+	configs, err := postProcessorSecretConfigs(evaluation)
+	if err != nil {
+		t.Fatalf("postProcessorSecretConfigs: %v", err)
+	}
+	want := []postProcessorSecretConfig{
+		{secretName: "git-shared", volumeName: postProcessorSecretVolumeNamePrefix + "0", mountPath: postProcessorSecretMountPathRoot + "/git-shared"},
+		{secretName: "s3-results", volumeName: postProcessorSecretVolumeNamePrefix + "1", mountPath: postProcessorSecretMountPathRoot + "/s3-results"},
+		{secretName: "hf-secret", volumeName: postProcessorSecretVolumeNamePrefix + "2", mountPath: postProcessorSecretMountPathRoot + "/hf-secret"},
+	}
+	if len(configs) != len(want) {
+		t.Fatalf("postProcessorSecretConfigs = %#v, want %#v", configs, want)
+	}
+	for i := range want {
+		if configs[i] != want[i] {
+			t.Errorf("secret config[%d] = %#v, want %#v", i, configs[i], want[i])
 		}
 	}
 }

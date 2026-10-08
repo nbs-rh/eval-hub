@@ -33,6 +33,26 @@ func (tc *scenarioConfig) theResponseStatusShouldBeOr(status1, status2 int) erro
 	return nil
 }
 
+func (tc *scenarioConfig) theResponseShouldContainValidConfidenceInterval() error {
+	values := make([]float64, 0, 2)
+	for _, bound := range []string{"lower", "upper"} {
+		path := "$.results.confidence_interval." + bound
+		value, err := tc.getJsonPathValue(path)
+		if err != nil {
+			return tc.logError(fmt.Errorf("confidence interval bound %q is missing: %w", bound, err))
+		}
+		number, ok := value.(float64)
+		if !ok || math.IsNaN(number) || math.IsInf(number, 0) {
+			return tc.logError(fmt.Errorf("confidence interval bound %q must be a finite number, got %T (%v)", bound, value, value))
+		}
+		values = append(values, number)
+	}
+	if values[0] > values[1] {
+		return tc.logError(fmt.Errorf("confidence interval lower bound %v exceeds upper bound %v", values[0], values[1]))
+	}
+	return nil
+}
+
 func (tc *scenarioConfig) theResponseContentTypeShouldBe(contentType string) error {
 	expected, err := tc.getValue(contentType)
 	if err != nil {

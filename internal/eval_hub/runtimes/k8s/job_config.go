@@ -80,6 +80,7 @@ type jobConfig struct {
 	testDataS3                 s3TestDataConfig
 	testDataPVC                pvcTestDataConfig
 	postProcessorPVCs          []postProcessorPVCConfig
+	postProcessorSecrets       []postProcessorSecretConfig
 	testDataGit                gitTestDataConfig
 	testDataHF                 hfTestDataConfig
 	testDataInitImage          string
@@ -104,6 +105,12 @@ type pvcTestDataConfig struct {
 
 type postProcessorPVCConfig struct {
 	claimName  string
+	volumeName string
+	mountPath  string
+}
+
+type postProcessorSecretConfig struct {
+	secretName string
 	volumeName string
 	mountPath  string
 }
@@ -137,24 +144,84 @@ func postProcessorPVCConfigs(evaluation *api.EvaluationJobResource) ([]postProce
 
 	seenClaims := make(map[string]struct{})
 	var configs []postProcessorPVCConfig
-	for _, ref := range operations.ConfidenceInterval.CalibrationDataRef {
-		if ref.PVC == nil {
-			continue
+	addPVC := func(pvc *api.PVCTestDataRef) error {
+		if pvc == nil {
+			return nil
 		}
-		claimName := strings.TrimSpace(ref.PVC.ClaimName)
+		claimName := strings.TrimSpace(pvc.ClaimName)
 		if claimName == "" {
-			return nil, fmt.Errorf("post-processing calibration PVC claim_name is required")
+			return fmt.Errorf("post-processing PVC claim_name is required")
 		}
 		if _, exists := seenClaims[claimName]; exists {
-			continue
+			return nil
 		}
 		seenClaims[claimName] = struct{}{}
-
 		configs = append(configs, postProcessorPVCConfig{
 			claimName:  claimName,
-			volumeName: fmt.Sprintf("%s%d", postProcessorCalibrationPVCVolumeNamePrefix, len(configs)),
-			mountPath:  fmt.Sprintf("%s/%s", postProcessorCalibrationPVCMountPathPrefix, claimName),
+			volumeName: fmt.Sprintf("%s%d", postProcessorPVCVolumeNamePrefix, len(configs)),
+			mountPath:  fmt.Sprintf("%s/%s", postProcessorPVCMountPathPrefix, claimName),
 		})
+		return nil
+	}
+	if operations.ConfidenceInterval.ResultsDataRef != nil {
+		if err := addPVC(operations.ConfidenceInterval.ResultsDataRef.PVC); err != nil {
+			return nil, err
+		}
+	}
+	for _, ref := range operations.ConfidenceInterval.CalibrationDataRef {
+		if err := addPVC(ref.PVC); err != nil {
+			return nil, err
+		}
+	}
+	return configs, nil
+}
+
+func postProcessorSecretConfigs(evaluation *api.EvaluationJobResource) ([]postProcessorSecretConfig, error) {
+	if evaluation == nil || !postprocessing.IsPostProcessingJob(&evaluation.EvaluationJobConfig) {
+		return nil, nil
+	}
+	operations, err := postprocessing.OperationsFromJob(&evaluation.EvaluationJobConfig)
+	if err != nil {
+		return nil, fmt.Errorf("read post-processing data source secrets: %w", err)
+	}
+	if operations.ConfidenceInterval == nil {
+		return nil, nil
+	}
+
+	seenSecrets := make(map[string]struct{})
+	var configs []postProcessorSecretConfig
+	addSecret := func(secretName string) {
+		secretName = strings.TrimSpace(secretName)
+		if secretName == "" {
+			return
+		}
+		if _, exists := seenSecrets[secretName]; exists {
+			return
+		}
+		seenSecrets[secretName] = struct{}{}
+		configs = append(configs, postProcessorSecretConfig{
+			secretName: secretName,
+			volumeName: fmt.Sprintf("%s%d", postProcessorSecretVolumeNamePrefix, len(configs)),
+			mountPath:  fmt.Sprintf("%s/%s", postProcessorSecretMountPathRoot, secretName),
+		})
+	}
+	addRefSecrets := func(s3 *api.S3TestDataRef, git *api.GitTestDataRef, hf *api.HFTestDataRef) {
+		if s3 != nil {
+			addSecret(s3.SecretRef)
+		}
+		if git != nil {
+			addSecret(git.SecretRef)
+		}
+		if hf != nil {
+			addSecret(hf.SecretRef)
+		}
+	}
+	results := operations.ConfidenceInterval.ResultsDataRef
+	if results != nil {
+		addRefSecrets(results.S3, results.Git, results.HF)
+	}
+	for _, ref := range operations.ConfidenceInterval.CalibrationDataRef {
+		addRefSecrets(ref.S3, ref.Git, ref.HF)
 	}
 	return configs, nil
 }
@@ -285,6 +352,10 @@ func buildJobConfig(evaluation *api.EvaluationJobResource, provider *api.Provide
 	if err != nil {
 		return nil, err
 	}
+	postProcessorSecrets, err := postProcessorSecretConfigs(evaluation)
+	if err != nil {
+		return nil, err
+	}
 
 	// GPU resource requests/limits are always propagated to the pod spec so that Kueue can
 	// account for GPU quota. Provider nodeSelector is the default; a HardwareProfile with
@@ -339,7 +410,8 @@ func buildJobConfig(evaluation *api.EvaluationJobResource, provider *api.Provide
 			claimName: testDataPVCClaimName,
 			subPath:   testDataPVCSubPath,
 		},
-		postProcessorPVCs: postProcessorPVCs,
+		postProcessorPVCs:    postProcessorPVCs,
+		postProcessorSecrets: postProcessorSecrets,
 		testDataGit: gitTestDataConfig{
 			url:       testDataGitURL,
 			ref:       testDataGitRef,

@@ -22,17 +22,24 @@ func assertTestDataEmptyDirSizeLimit(t *testing.T, volumes []corev1.Volume) {
 	}
 }
 
-func TestBuildJobMountsPostProcessorCalibrationPVCs(t *testing.T) {
+func TestBuildJobMountsPostProcessorSources(t *testing.T) {
 	pvcs := []postProcessorPVCConfig{
 		{
-			claimName:  "calibration-a",
-			volumeName: postProcessorCalibrationPVCVolumeNamePrefix + "0",
-			mountPath:  postProcessorCalibrationPVCMountPathPrefix + "/calibration-a",
+			claimName:  "results",
+			volumeName: postProcessorPVCVolumeNamePrefix + "0",
+			mountPath:  postProcessorPVCMountPathPrefix + "/results",
 		},
 		{
-			claimName:  "calibration-b",
-			volumeName: postProcessorCalibrationPVCVolumeNamePrefix + "1",
-			mountPath:  postProcessorCalibrationPVCMountPathPrefix + "/calibration-b",
+			claimName:  "calibration-a",
+			volumeName: postProcessorPVCVolumeNamePrefix + "1",
+			mountPath:  postProcessorPVCMountPathPrefix + "/calibration-a",
+		},
+	}
+	secrets := []postProcessorSecretConfig{
+		{
+			secretName: "s3-credentials",
+			volumeName: postProcessorSecretVolumeNamePrefix + "0",
+			mountPath:  postProcessorSecretMountPathRoot + "/s3-credentials",
 		},
 	}
 	cfg := &jobConfig{
@@ -46,8 +53,12 @@ func TestBuildJobMountsPostProcessorCalibrationPVCs(t *testing.T) {
 		defaultEnv: []api.EnvVar{{
 			Name:  envPostProcessorPVCMountsName,
 			Value: "provider-value-must-not-override-runtime-paths",
+		}, {
+			Name:  envPostProcessorSecretRootName,
+			Value: "provider-value-must-not-override-runtime-paths",
 		}},
-		postProcessorPVCs: pvcs,
+		postProcessorPVCs:    pvcs,
+		postProcessorSecrets: secrets,
 	}
 
 	job, err := buildJob(cfg, nil)
@@ -78,8 +89,20 @@ func TestBuildJobMountsPostProcessorCalibrationPVCs(t *testing.T) {
 			t.Errorf("adapter mount %q = %#v, want read-only mount at %q", pvc.volumeName, mount, pvc.mountPath)
 		}
 		if findVolumeMount(sidecar.VolumeMounts, pvc.volumeName) != nil {
-			t.Errorf("sidecar must not mount calibration PVC %q", pvc.claimName)
+			t.Errorf("sidecar must not mount post-processing PVC %q", pvc.claimName)
 		}
+	}
+	secret := secrets[0]
+	secretVolume := findVolume(job.Spec.Template.Spec.Volumes, secret.volumeName)
+	if secretVolume == nil || secretVolume.Secret == nil || secretVolume.Secret.SecretName != secret.secretName {
+		t.Fatalf("secret volume %q = %#v, want Secret %q", secret.volumeName, secretVolume, secret.secretName)
+	}
+	secretMount := findVolumeMount(adapter.VolumeMounts, secret.volumeName)
+	if secretMount == nil || secretMount.MountPath != secret.mountPath || !secretMount.ReadOnly {
+		t.Errorf("adapter Secret mount = %#v, want read-only mount at %q", secretMount, secret.mountPath)
+	}
+	if findVolumeMount(sidecar.VolumeMounts, secret.volumeName) != nil {
+		t.Error("post-processing source Secret must not be mounted in the sidecar")
 	}
 
 	var encodedMountPaths string
@@ -92,6 +115,18 @@ func TestBuildJobMountsPostProcessorCalibrationPVCs(t *testing.T) {
 	}
 	if mappingEnvCount != 1 {
 		t.Fatalf("found %d %s env vars, want 1", mappingEnvCount, envPostProcessorPVCMountsName)
+	}
+	secretRootEnvCount := 0
+	for _, item := range adapter.Env {
+		if item.Name == envPostProcessorSecretRootName {
+			secretRootEnvCount++
+			if item.Value != postProcessorSecretMountPathRoot {
+				t.Errorf("%s = %q, want %q", envPostProcessorSecretRootName, item.Value, postProcessorSecretMountPathRoot)
+			}
+		}
+	}
+	if secretRootEnvCount != 1 {
+		t.Fatalf("found %d %s env vars, want 1", secretRootEnvCount, envPostProcessorSecretRootName)
 	}
 	var mountPaths map[string]string
 	if err := json.Unmarshal([]byte(encodedMountPaths), &mountPaths); err != nil {

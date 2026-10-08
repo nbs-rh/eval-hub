@@ -652,6 +652,10 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 	ctx.Step(`^all benchmarks in the response should have a test block with pass criteria$`, tc.theAllBenchmarksHaveTestBlock)
 	ctx.Step(`^I wait for the evaluation job status to be "([^"]*)"$`, tc.iWaitForEvaluationJobStatus)
 	ctx.Step(`^I wait for the evaluation job "([^"]*)" status to be "([^"]*)"$`, tc.iWaitForEvaluationJobStatusByID)
+	ctx.Step(`^I wait for standalone post-processing "([^"]*)" to reach "([^"]*)"$`, tc.iWaitForStandalonePostProcessingStatusByID)
+	ctx.Step(`^the response should contain a valid confidence interval$`, tc.theResponseShouldContainValidConfidenceInterval)
+	ctx.Step(`^I prepare standalone post-processing fixtures for "([^"]*)" using results source "([^"]*)" and calibration source "([^"]*)"$`, tc.iPrepareStandalonePostProcessingFixtures)
+	ctx.Step(`^I submit the prepared standalone post-processing request$`, tc.iSubmitPreparedStandalonePostProcessingRequest)
 	ctx.Step(`^I set the wait deadline to "([^"]*)"$`, tc.iSetWaitDeadlineTo)
 	ctx.Step(`^I set the wait interval to "([^"]*)"$`, tc.iSetWaitIntervalTo)
 	// Other steps

@@ -73,6 +73,40 @@ func TestToEvaluationJob(t *testing.T) {
 	}
 }
 
+func TestToEvaluationJobConfiguresOCIResultSource(t *testing.T) {
+	request := &api.StandalonePostProcessingRequest{
+		Operations: api.StandalonePostProcessingOperations{
+			ConfidenceInterval: &api.StandaloneConfidenceIntervalConfig{
+				ResultsDataRef: &api.PostProcessingResultsDataRef{
+					OCI: &api.OCIDataRef{
+						Coordinates: api.OCICoordinates{
+							OCIHost:       "quay.io",
+							OCIRepository: "team/results",
+							OCITag:        "fixture-v1",
+						},
+						K8s: &api.OCIConnectionConfig{Connection: "registry-credentials"},
+					},
+				},
+			},
+		},
+	}
+
+	job := ToEvaluationJob(request)
+	if job.Exports == nil || job.Exports.OCI == nil {
+		t.Fatal("mapped job has no OCI exports configuration for the OCI source proxy")
+	}
+	gotCoordinates := job.Exports.OCI.Coordinates
+	wantCoordinates := request.Operations.ConfidenceInterval.ResultsDataRef.OCI.Coordinates
+	if gotCoordinates.OCIHost != wantCoordinates.OCIHost ||
+		gotCoordinates.OCIRepository != wantCoordinates.OCIRepository ||
+		gotCoordinates.OCITag != wantCoordinates.OCITag {
+		t.Errorf("OCI coordinates = %#v, want %#v", gotCoordinates, wantCoordinates)
+	}
+	if job.Exports.OCI.K8s != request.Operations.ConfidenceInterval.ResultsDataRef.OCI.K8s {
+		t.Errorf("OCI connection = %#v, want %#v", job.Exports.OCI.K8s, request.Operations.ConfidenceInterval.ResultsDataRef.OCI.K8s)
+	}
+}
+
 func TestOperationsFromJob(t *testing.T) {
 	tests := []struct {
 		name       string

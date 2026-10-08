@@ -89,7 +89,7 @@ func ToEvaluationJob(request *api.StandalonePostProcessingRequest) *api.Evaluati
 		// does not imply an order when none was requested.
 		parameters["operation_order"] = request.OperationOrder
 	}
-	return &api.EvaluationJobConfig{
+	job := &api.EvaluationJobConfig{
 		Name:           name,
 		Model:          &api.ModelRef{Name: BenchmarkID},
 		HardwareConfig: request.HardwareConfig,
@@ -99,6 +99,17 @@ func ToEvaluationJob(request *api.StandalonePostProcessingRequest) *api.Evaluati
 			Parameters: parameters,
 		}},
 	}
+	if request.Operations.ConfidenceInterval != nil && request.Operations.ConfidenceInterval.ResultsDataRef != nil {
+		if ociRef := request.Operations.ConfidenceInterval.ResultsDataRef.OCI; ociRef != nil {
+			job.Exports = &api.EvaluationExports{
+				OCI: &api.EvaluationExportsOCI{
+					Coordinates: ociRef.Coordinates,
+					K8s:         ociRef.K8s,
+				},
+			}
+		}
+	}
+	return job
 }
 
 // OperationsFromJob decodes the operations object stored in the adapter
