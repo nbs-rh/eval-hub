@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/eval-hub/eval-hub/internal/eval_hub/constants"
 	"github.com/eval-hub/eval-hub/internal/eval_hub/workloads"
 	"github.com/eval-hub/eval-hub/pkg/api"
 )
@@ -23,14 +24,57 @@ const (
 )
 
 func init() {
-	workloads.Register(workloads.Workload{
-		Type:            workloadType,
-		ProviderID:      ProviderID,
-		BenchmarkID:     BenchmarkID,
-		Internal:        true,
-		MatchesJob:      IsPostProcessingJob,
-		RuntimeProvider: RuntimeProvider,
-	})
+	workloads.Register(Workload{})
+}
+
+// Workload implements standalone post-processing identification and API conversion.
+type Workload struct{}
+
+var _ workloads.Workload = Workload{}
+
+func (Workload) Type() workloads.Type                         { return workloadType }
+func (Workload) ProviderID() string                           { return ProviderID }
+func (Workload) BenchmarkID() string                          { return BenchmarkID }
+func (Workload) Internal() bool                               { return true }
+func (Workload) MatchesJob(job *api.EvaluationJobConfig) bool { return IsPostProcessingJob(job) }
+func (Workload) RuntimeProvider() *api.ProviderResource       { return RuntimeProvider() }
+func (Workload) NewRequest() any                              { return &api.StandalonePostProcessingRequest{} }
+
+func (Workload) GetOptions() workloads.GetOptions {
+	return workloads.GetOptions{
+		PathParameter:    constants.PathParameterPostProcessingID,
+		ResourceName:     "post-processing computation",
+		SpanName:         "get-post-processing",
+		TraceIDAttribute: "post_processing.id",
+	}
+}
+
+func (Workload) ToEvaluationJob(request any) (*api.EvaluationJobConfig, error) {
+	value, ok := request.(*api.StandalonePostProcessingRequest)
+	if !ok || value == nil {
+		return nil, fmt.Errorf("invalid post-processing request type %T", request)
+	}
+	return ToEvaluationJob(value), nil
+}
+
+func (Workload) ResourceFromJob(job *api.EvaluationJobResource) (any, error) {
+	return ResourceFromJob(job)
+}
+
+func (Workload) ValidateCreate(job *api.EvaluationJobConfig) error {
+	if !IsPostProcessingJob(job) {
+		return fmt.Errorf("invalid internal post-processing job configuration")
+	}
+	_, err := OperationsFromJob(job)
+	return err
+}
+
+func (w Workload) ValidateGet(id string, job *api.EvaluationJobResource) error {
+	return workloads.ValidateResource(w, id, job)
+}
+
+func (w Workload) ValidateDelete(id string, job *api.EvaluationJobResource) error {
+	return workloads.ValidateResource(w, id, job)
 }
 
 // RuntimeProvider builds the in-memory execution descriptor used by runtimes

@@ -20,30 +20,7 @@ import (
 
 // HandleGetPostProcessing handles GET /api/v1/evaluations/post-processing/{post_processing_job_id}.
 func (h *Handlers) HandleGetPostProcessing(ctx *executioncontext.ExecutionContext, req httpwrappers.RequestWrapper, w httpwrappers.ResponseWrapper) {
-	logging.LogRequestStarted(ctx)
-	id := req.PathValue(constants.PathParameterPostProcessingID)
-	if id == "" {
-		w.Error(serviceerrors.NewServiceError(messages.MissingPathParameter, "ParameterName", constants.PathParameterPostProcessingID), ctx.RequestID)
-		return
-	}
-
-	storage := h.getStorage(ctx)
-	_ = h.withSpan(ctx, func(runtimeCtx context.Context) error {
-		scopedContext := storage.WithContext(runtimeCtx).WithWorkloadType(workloads.PostProcessing)
-		job, err := h.getStandalonePostProcessingJob(scopedContext, id)
-		if err != nil {
-			w.Error(err, ctx.RequestID)
-			return err
-		}
-		response, err := postprocessing.ResourceFromJob(job)
-		if err != nil {
-			err = serviceerrors.NewServiceError(messages.InternalServerError, "Error", err.Error())
-			w.Error(err, ctx.RequestID)
-			return err
-		}
-		w.WriteJSON(response, http.StatusOK)
-		return nil
-	}, "storage", "get-post-processing", "post_processing.id", id)
+	h.HandleGetJob(ctx, req, w, workloads.PostProcessing)
 }
 
 // HandleDeletePostProcessing handles DELETE /api/v1/evaluations/post-processing/{post_processing_job_id}.
