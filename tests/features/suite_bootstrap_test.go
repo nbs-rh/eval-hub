@@ -161,7 +161,7 @@ func (a *apiFeature) startLocalServer(port int) error {
 	if err != nil {
 		return logError(err)
 	}
-	serviceConfig, err := config.LoadConfig(logger, version, "local", time.Now().Format(time.RFC3339), "")
+	serviceConfig, err := config.LoadConfig(logger, version, "local", time.Now().Format(time.RFC3339), "local")
 	if err != nil {
 		return logError(fmt.Errorf("failed to load service config: %w", err))
 	}

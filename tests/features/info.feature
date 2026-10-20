@@ -21,6 +21,7 @@ Feature: Global service information
     And the response at path "$.version" should not be empty
     And the response at path "$.build" should not be empty
     And the response at path "$.build_date" should not be empty
+    And the response at path "$.git_hash" should not be empty
     And the array at path "$.hardware_profiles" in the response should have length at least 0
     And service info metadata matches configured environment variables
 
