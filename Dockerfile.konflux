@@ -23,33 +23,15 @@ ARG BUILD_DATE
 ARG BUILD_PACKAGE=main
 ARG GIT_HASH
 
-# Build the binary with optimizations
-RUN CGO_ENABLED=1 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} GOEXPERIMENT=strictfipsruntime go build \
-    -ldflags="-w -s -X '${BUILD_PACKAGE}.Build=${BUILD_NUMBER}' -X '${BUILD_PACKAGE}.BuildDate=${BUILD_DATE}' -X '${BUILD_PACKAGE}.GitHash=${GIT_HASH}'" \
-    -a -installsuffix cgo \
-    -o eval-hub \
-    ./cmd/eval_hub
-
-# Build eval-runtime-sidecar binary (same image can run either via container command override)
-RUN CGO_ENABLED=1 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} GOEXPERIMENT=strictfipsruntime go build \
-    -ldflags="-w -s -X '${BUILD_PACKAGE}.Build=${BUILD_NUMBER}' -X '${BUILD_PACKAGE}.BuildDate=${BUILD_DATE}' -X '${BUILD_PACKAGE}.GitHash=${GIT_HASH}'" \
-    -a -installsuffix cgo \
-    -o eval-runtime-sidecar \
-    ./cmd/eval_runtime_sidecar
-
-# Build the eval runtime init binary (S3 test-data download)
-RUN CGO_ENABLED=1 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} GOEXPERIMENT=strictfipsruntime go build \
-    -ldflags="-w -s -X '${BUILD_PACKAGE}.Build=${BUILD_NUMBER}' -X '${BUILD_PACKAGE}.BuildDate=${BUILD_DATE}' -X '${BUILD_PACKAGE}.GitHash=${GIT_HASH}'" \
-    -a -installsuffix cgo \
-    -o eval-runtime-init \
-    ./cmd/eval_runtime_init
-
-# Build evalhub-mcp binary
-RUN CGO_ENABLED=1 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} GOEXPERIMENT=strictfipsruntime go build \
-    -ldflags="-w -s -X '${BUILD_PACKAGE}.Build=${BUILD_NUMBER}' -X '${BUILD_PACKAGE}.BuildDate=${BUILD_DATE}' -X '${BUILD_PACKAGE}.GitHash=${GIT_HASH}'" \
-    -a -installsuffix cgo \
-    -o evalhub-mcp \
-    ./cmd/evalhub_mcp
+# Resolve the build timestamp once so all binaries share the same metadata.
+# An explicit BUILD_DATE takes precedence over the UTC compilation timestamp.
+RUN BUILD_DATE="${BUILD_DATE:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}" && \
+    export CGO_ENABLED=1 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} GOEXPERIMENT=strictfipsruntime && \
+    BUILD_LDFLAGS="-w -s -X '${BUILD_PACKAGE}.Build=${BUILD_NUMBER}' -X '${BUILD_PACKAGE}.BuildDate=${BUILD_DATE}' -X '${BUILD_PACKAGE}.GitHash=${GIT_HASH}'" && \
+    go build -ldflags="${BUILD_LDFLAGS}" -a -installsuffix cgo -o eval-hub ./cmd/eval_hub && \
+    go build -ldflags="${BUILD_LDFLAGS}" -a -installsuffix cgo -o eval-runtime-sidecar ./cmd/eval_runtime_sidecar && \
+    go build -ldflags="${BUILD_LDFLAGS}" -a -installsuffix cgo -o eval-runtime-init ./cmd/eval_runtime_init && \
+    go build -ldflags="${BUILD_LDFLAGS}" -a -installsuffix cgo -o evalhub-mcp ./cmd/evalhub_mcp
 
 # Runtime stage
 FROM registry.redhat.io/ubi9/ubi-minimal-pqc@sha256:b3a0b012de0c578082e1bc5b01c8bc27461b4eeb571a0b1a2b21a07dbd845a62
