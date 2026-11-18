@@ -38,6 +38,11 @@ used. The tests do not read the CA from kubeconfig automatically. This setting
 does not configure certificate trust inside evaluation job containers or the
 separate MLflow and OCI clients.
 
+When the test runner cannot reach a model endpoint because of its network path,
+set `MODEL_ENDPOINT_PREFLIGHT_WARN_ONLY=true` to continue with the evaluation
+scenarios. The in-cluster evaluation jobs remain responsible for validating
+model access; HTTP responses such as authentication failures are still treated
+as unreachable.
 ### Model Overrides (Required)
 
 Set the model fields in the test payloads using environment variables:
