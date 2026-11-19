@@ -210,11 +210,11 @@ func getMLflowTLSConfig() *tls.Config {
 
 // getMLflowHTTPClient returns an HTTP client configured for MLflow API calls
 func getMLflowHTTPClient() *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.TLSClientConfig = getMLflowTLSConfig()
 	return &http.Client{
 		Timeout: 60 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig: getMLflowTLSConfig(),
-		},
+		Transport: transport,
 	}
 }
 
